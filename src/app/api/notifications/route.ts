@@ -1,7 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { v4 as uuidv4 } from 'uuid';
+
+// Demo notifications
+const DEMO_NOTIFICATIONS = [
+  {
+    id: 'demo-notif-1',
+    type: 'alert',
+    title: 'High CPA Detected',
+    message: 'Campaign "Non-Brand - Generic Terms" has CPA 35% above target',
+    read: false,
+    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    account: { name: 'Demo E-Commerce Store', id: '123-456-7890' },
+  },
+  {
+    id: 'demo-notif-2',
+    type: 'success',
+    title: 'Budget Optimization Applied',
+    message: 'AI increased budget by 10% on "Brand - Search Campaign"',
+    read: true,
+    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+    account: { name: 'Demo E-Commerce Store', id: '123-456-7890' },
+  },
+  {
+    id: 'demo-notif-3',
+    type: 'info',
+    title: 'Weekly Performance Report',
+    message: 'Your weekly performance report is ready to view',
+    read: true,
+    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+    account: null,
+  },
+];
 
 // GET /api/notifications - Get all notifications for the current user
 export async function GET(request: NextRequest) {
@@ -13,6 +44,16 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const unreadOnly = searchParams.get('unreadOnly') === 'true';
+
+  // Demo mode - return mock notifications
+  if (isDemoMode) {
+    const notifications = unreadOnly
+      ? DEMO_NOTIFICATIONS.filter(n => !n.read)
+      : DEMO_NOTIFICATIONS;
+    const unreadCount = DEMO_NOTIFICATIONS.filter(n => !n.read).length;
+    return NextResponse.json({ notifications, unreadCount });
+  }
+
   const accountId = searchParams.get('accountId');
   const limit = parseInt(searchParams.get('limit') || '50', 10);
 

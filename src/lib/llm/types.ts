@@ -82,10 +82,48 @@ export interface ILLMProvider {
   isConfigured(): boolean;
 }
 
+// Task complexity levels for smart model routing
+export type TaskComplexity = 'simple' | 'moderate' | 'complex';
+
+// Task types for automatic model selection
+export type TaskType =
+  | 'formatting'        // Simple text formatting, JSON parsing
+  | 'summarization'     // Summarizing data
+  | 'classification'    // Categorizing/classifying items
+  | 'analysis'          // Analyzing campaign data
+  | 'recommendation'    // Generating recommendations
+  | 'strategy'          // Strategic planning
+  | 'conversation';     // Chat/conversation
+
+// Map task types to complexity
+export const TASK_COMPLEXITY_MAP: Record<TaskType, TaskComplexity> = {
+  formatting: 'simple',
+  summarization: 'simple',
+  classification: 'simple',
+  analysis: 'moderate',
+  recommendation: 'moderate',
+  strategy: 'complex',
+  conversation: 'moderate',
+};
+
 // Default models
 export const DEFAULT_MODELS: Record<LLMProvider, string> = {
   anthropic: 'claude-sonnet-4-20250514',
   openai: 'gpt-4o',
+};
+
+// Models by complexity - use cheaper models for simpler tasks
+export const MODELS_BY_COMPLEXITY: Record<LLMProvider, Record<TaskComplexity, string>> = {
+  anthropic: {
+    simple: 'claude-3-5-haiku-20241022',    // Fast & cheap for simple tasks
+    moderate: 'claude-sonnet-4-20250514',    // Balanced for analysis
+    complex: 'claude-opus-4-20250514',       // Most capable for strategy
+  },
+  openai: {
+    simple: 'gpt-4o-mini',                   // Fast & cheap for simple tasks
+    moderate: 'gpt-4o',                      // Balanced for analysis
+    complex: 'gpt-4o',                       // Best available for complex tasks
+  },
 };
 
 // Provider display names
@@ -109,3 +147,18 @@ export const AVAILABLE_MODELS: Record<LLMProvider, { id: string; name: string }[
     { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
   ],
 };
+
+/**
+ * Get the appropriate model for a task type
+ */
+export function getModelForTask(provider: LLMProvider, taskType: TaskType): string {
+  const complexity = TASK_COMPLEXITY_MAP[taskType];
+  return MODELS_BY_COMPLEXITY[provider][complexity];
+}
+
+/**
+ * Get the appropriate model for a complexity level
+ */
+export function getModelForComplexity(provider: LLMProvider, complexity: TaskComplexity): string {
+  return MODELS_BY_COMPLEXITY[provider][complexity];
+}

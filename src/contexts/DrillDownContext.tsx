@@ -1,6 +1,7 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
+import { useSearchParams, usePathname } from 'next/navigation';
 import { Campaign, AdGroup, Keyword } from '@/types/campaign';
 
 export type EntityType = 'campaigns' | 'adGroups' | 'keywords';
@@ -65,38 +66,116 @@ function loadDrillDownState(): SavedDrillDownState | null {
   return null;
 }
 
+// Get initial state from sessionStorage (SSR-safe)
+function getInitialState(): SavedDrillDownState {
+  const defaultState: SavedDrillDownState = {
+    currentLevel: 'campaigns',
+    selectedCampaign: null,
+    selectedAdGroup: null,
+    breadcrumbs: [{ type: 'campaigns', name: 'Campaigns' }],
+  };
+
+  const saved = loadDrillDownState();
+  return saved || defaultState;
+}
+
 export function DrillDownProvider({ children }: { children: ReactNode }) {
-  const [currentLevel, setCurrentLevel] = useState<EntityType>('campaigns');
-  const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
-  const [selectedAdGroup, setSelectedAdGroup] = useState<AdGroup | null>(null);
-  const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>([
-    { type: 'campaigns', name: 'Campaigns' }
-  ]);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
 
-  // Load saved state on mount
-  useEffect(() => {
-    const savedState = loadDrillDownState();
-    if (savedState) {
-      setCurrentLevel(savedState.currentLevel);
-      setSelectedCampaign(savedState.selectedCampaign);
-      setSelectedAdGroup(savedState.selectedAdGroup);
-      setBreadcrumbs(savedState.breadcrumbs);
-    }
-    setIsInitialized(true);
-  }, []);
+  const initialState = getInitialState();
+  const [currentLevel, setCurrentLevel] = useState<EntityType>(initialState.currentLevel);
+  const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(initialState.selectedCampaign);
+  const [selectedAdGroup, setSelectedAdGroup] = useState<AdGroup | null>(initialState.selectedAdGroup);
+  const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>(initialState.breadcrumbs);
 
-  // Save state whenever it changes (after initialization)
+  // Use refs to prevent loops and track state
+  const isInitializedRef = useRef(false);
+  const isUpdatingUrlRef = useRef(false);
+
+  // Restore state from URL on initial mount only (runs once)
   useEffect(() => {
-    if (isInitialized) {
-      saveDrillDownState({
-        currentLevel,
-        selectedCampaign,
-        selectedAdGroup,
-        breadcrumbs,
-      });
+    if (isInitializedRef.current) return;
+    isInitializedRef.current = true;
+
+    const view = searchParams.get('view');
+    const campaignId = searchParams.get('campaignId');
+    const adGroupId = searchParams.get('adGroupId');
+
+    // If URL has drill-down params, restore from URL + sessionStorage labels
+    if (view && campaignId) {
+      const savedState = loadDrillDownState();
+
+      if (view === 'adgroups' || view === 'adGroups') {
+        // Restore ad groups view
+        const campaignName = savedState?.selectedCampaign?.name || 'Campaign';
+        const campaign = savedState?.selectedCampaign?.id === campaignId
+          ? savedState.selectedCampaign
+          : { id: campaignId, name: campaignName } as Campaign;
+
+        setSelectedCampaign(campaign);
+        setSelectedAdGroup(null);
+        setCurrentLevel('adGroups');
+        setBreadcrumbs([
+          { type: 'campaigns', name: 'Campaigns' },
+          { type: 'adGroups', id: campaignId, name: campaign.name }
+        ]);
+      } else if ((view === 'keywords' || view === 'ads') && adGroupId) {
+        // Restore keywords/ads view
+        const campaignName = savedState?.selectedCampaign?.name || 'Campaign';
+        const adGroupName = savedState?.selectedAdGroup?.name || 'Ad Group';
+
+        const campaign = savedState?.selectedCampaign?.id === campaignId
+          ? savedState.selectedCampaign
+          : { id: campaignId, name: campaignName } as Campaign;
+        const adGroup = savedState?.selectedAdGroup?.id === adGroupId
+          ? savedState.selectedAdGroup
+          : { id: adGroupId, name: adGroupName } as AdGroup;
+
+        setSelectedCampaign(campaign);
+        setSelectedAdGroup(adGroup);
+        setCurrentLevel('keywords');
+        setBreadcrumbs([
+          { type: 'campaigns', name: 'Campaigns' },
+          { type: 'adGroups', id: campaignId, name: campaign.name },
+          { type: 'keywords', id: adGroupId, name: adGroup.name }
+        ]);
+      }
     }
-  }, [currentLevel, selectedCampaign, selectedAdGroup, breadcrumbs, isInitialized]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
+
+  // Helper to update URL - uses window.history to avoid React re-renders
+  const updateUrlSilently = useCallback((level: EntityType, campaign: Campaign | null, adGroup: AdGroup | null) => {
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams();
+
+    if (level === 'adGroups' && campaign) {
+      params.set('view', 'adgroups');
+      params.set('campaignId', campaign.id);
+    } else if (level === 'keywords' && campaign && adGroup) {
+      params.set('view', 'keywords');
+      params.set('campaignId', campaign.id);
+      params.set('adGroupId', adGroup.id);
+    }
+
+    const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
+    // Use window.history directly to avoid triggering React navigation
+    window.history.replaceState(null, '', newUrl);
+  }, [pathname]);
+
+  // Save state to sessionStorage whenever it changes (for labels/data)
+  useEffect(() => {
+    if (!isInitializedRef.current) return;
+
+    saveDrillDownState({
+      currentLevel,
+      selectedCampaign,
+      selectedAdGroup,
+      breadcrumbs,
+    });
+  }, [currentLevel, selectedCampaign, selectedAdGroup, breadcrumbs]);
 
   const drillIntoCampaign = useCallback((campaign: Campaign) => {
     setSelectedCampaign(campaign);
@@ -106,7 +185,9 @@ export function DrillDownProvider({ children }: { children: ReactNode }) {
       { type: 'campaigns', name: 'Campaigns' },
       { type: 'adGroups', id: campaign.id, name: campaign.name }
     ]);
-  }, []);
+    // Update URL silently after state change
+    updateUrlSilently('adGroups', campaign, null);
+  }, [updateUrlSilently]);
 
   const drillIntoAdGroup = useCallback((adGroup: AdGroup) => {
     setSelectedAdGroup(adGroup);
@@ -115,7 +196,14 @@ export function DrillDownProvider({ children }: { children: ReactNode }) {
       ...prev.slice(0, 2),
       { type: 'keywords', id: adGroup.id, name: adGroup.name }
     ]);
+    // Update URL silently after state change - need selectedCampaign from closure
   }, []);
+
+  // Separate effect to update URL for drillIntoAdGroup (needs selectedCampaign)
+  const drillIntoAdGroupWithUrl = useCallback((adGroup: AdGroup) => {
+    drillIntoAdGroup(adGroup);
+    updateUrlSilently('keywords', selectedCampaign, adGroup);
+  }, [drillIntoAdGroup, selectedCampaign, updateUrlSilently]);
 
   const navigateToBreadcrumb = useCallback((index: number) => {
     const targetBreadcrumb = breadcrumbs[index];
@@ -126,31 +214,36 @@ export function DrillDownProvider({ children }: { children: ReactNode }) {
       setSelectedAdGroup(null);
       setCurrentLevel('campaigns');
       setBreadcrumbs([{ type: 'campaigns', name: 'Campaigns' }]);
+      updateUrlSilently('campaigns', null, null);
     } else if (targetBreadcrumb.type === 'adGroups') {
       setSelectedAdGroup(null);
       setCurrentLevel('adGroups');
       setBreadcrumbs(prev => prev.slice(0, 2));
+      updateUrlSilently('adGroups', selectedCampaign, null);
     }
-  }, [breadcrumbs]);
+  }, [breadcrumbs, selectedCampaign, updateUrlSilently]);
 
   const goBack = useCallback(() => {
     if (currentLevel === 'keywords') {
       setSelectedAdGroup(null);
       setCurrentLevel('adGroups');
       setBreadcrumbs(prev => prev.slice(0, 2));
+      updateUrlSilently('adGroups', selectedCampaign, null);
     } else if (currentLevel === 'adGroups') {
       setSelectedCampaign(null);
       setCurrentLevel('campaigns');
       setBreadcrumbs([{ type: 'campaigns', name: 'Campaigns' }]);
+      updateUrlSilently('campaigns', null, null);
     }
-  }, [currentLevel]);
+  }, [currentLevel, selectedCampaign, updateUrlSilently]);
 
   const resetToRoot = useCallback(() => {
     setSelectedCampaign(null);
     setSelectedAdGroup(null);
     setCurrentLevel('campaigns');
     setBreadcrumbs([{ type: 'campaigns', name: 'Campaigns' }]);
-  }, []);
+    updateUrlSilently('campaigns', null, null);
+  }, [updateUrlSilently]);
 
   return (
     <DrillDownContext.Provider
@@ -160,7 +253,7 @@ export function DrillDownProvider({ children }: { children: ReactNode }) {
         selectedAdGroup,
         breadcrumbs,
         drillIntoCampaign,
-        drillIntoAdGroup,
+        drillIntoAdGroup: drillIntoAdGroupWithUrl,
         navigateToBreadcrumb,
         goBack,
         resetToRoot,

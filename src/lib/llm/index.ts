@@ -10,10 +10,13 @@ import {
   ILLMProvider,
   DEFAULT_MODELS,
   PROVIDER_NAMES,
-  AVAILABLE_MODELS,
   CampaignData,
   CampaignInsight,
   AccountAnalysis,
+  TaskType,
+  TaskComplexity,
+  getModelForTask,
+  getModelForComplexity,
 } from './types';
 
 export * from './types';
@@ -114,6 +117,55 @@ export class LLMService {
   }
 }
 
+/**
+ * Create an LLM service optimized for a specific task type
+ * This automatically selects the most cost-effective model for the task
+ */
+export function createServiceForTask(
+  taskType: TaskType,
+  config?: Partial<LLMConfig>
+): LLMService {
+  const defaultProvider = getDefaultProvider();
+  const provider = config?.provider || defaultProvider;
+
+  if (!provider) {
+    throw new Error('No LLM provider configured');
+  }
+
+  const model = getModelForTask(provider, taskType);
+  console.log(`[LLM] Using ${model} for ${taskType} task (cost optimization)`);
+
+  return new LLMService({
+    ...config,
+    provider,
+    model,
+  });
+}
+
+/**
+ * Create an LLM service for a specific complexity level
+ */
+export function createServiceForComplexity(
+  complexity: TaskComplexity,
+  config?: Partial<LLMConfig>
+): LLMService {
+  const defaultProvider = getDefaultProvider();
+  const provider = config?.provider || defaultProvider;
+
+  if (!provider) {
+    throw new Error('No LLM provider configured');
+  }
+
+  const model = getModelForComplexity(provider, complexity);
+  console.log(`[LLM] Using ${model} for ${complexity} complexity task`);
+
+  return new LLMService({
+    ...config,
+    provider,
+    model,
+  });
+}
+
 // ============================================
 // Campaign Analysis Functions
 // ============================================
@@ -152,7 +204,8 @@ export async function analyzeCampaigns(
   campaigns: CampaignData[],
   config?: Partial<LLMConfig>
 ): Promise<AccountAnalysis> {
-  const service = new LLMService(config);
+  // Use task-optimized model for analysis (moderate complexity)
+  const service = createServiceForTask('analysis', config);
 
   // Prepare campaign summary for analysis
   const campaignSummary = campaigns.map(c => ({
@@ -229,7 +282,8 @@ export async function generateCampaignInsight(
   campaign: CampaignData,
   config?: Partial<LLMConfig>
 ): Promise<CampaignInsight[]> {
-  const service = new LLMService(config);
+  // Use cheaper model for single campaign insights (simpler task)
+  const service = createServiceForTask('classification', config);
 
   const prompt = `Analyze this Google Ads campaign and provide 2-3 actionable insights:
 
@@ -270,7 +324,8 @@ export async function generateOptimizationSuggestions(
   context?: string,
   config?: Partial<LLMConfig>
 ): Promise<string> {
-  const service = new LLMService(config);
+  // Use task-optimized model for recommendations
+  const service = createServiceForTask('recommendation', config);
 
   const prompt = `Based on this Google Ads data, provide specific optimization recommendations.
 ${context ? `Additional context: ${context}` : ''}

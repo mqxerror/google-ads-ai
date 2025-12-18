@@ -1,8 +1,28 @@
 import NextAuth from 'next-auth';
 import type { JWT } from 'next-auth/jwt';
+import type { Session } from 'next-auth';
 import Google from 'next-auth/providers/google';
+import Credentials from 'next-auth/providers/credentials';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import prisma from './prisma';
+
+// Check if demo mode is enabled
+export const isDemoMode = process.env.DEMO_MODE === 'true';
+
+// Demo user for testing without Google OAuth
+export const DEMO_USER = {
+  id: 'demo-user-123',
+  name: 'Demo User',
+  email: 'demo@example.com',
+  image: null,
+};
+
+// Demo session for client-side use
+export const DEMO_SESSION: Session = {
+  user: DEMO_USER,
+  expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+  accessToken: 'demo-access-token',
+};
 
 // Extended JWT type with our custom properties
 interface ExtendedJWT extends JWT {
@@ -48,22 +68,37 @@ async function refreshAccessToken(token: ExtendedJWT): Promise<ExtendedJWT> {
   }
 }
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: PrismaAdapter(prisma),
-  providers: [
-    Google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      authorization: {
-        params: {
-          scope:
-            'openid email profile https://www.googleapis.com/auth/adwords',
-          access_type: 'offline',
-          prompt: 'consent',
+// Build providers based on mode
+const providers = isDemoMode
+  ? [
+      Credentials({
+        id: 'demo',
+        name: 'Demo',
+        credentials: {},
+        async authorize() {
+          // In demo mode, always return the demo user
+          return DEMO_USER;
         },
-      },
-    }),
-  ],
+      }),
+    ]
+  : [
+      Google({
+        clientId: process.env.GOOGLE_CLIENT_ID!,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+        authorization: {
+          params: {
+            scope:
+              'openid email profile https://www.googleapis.com/auth/adwords',
+            access_type: 'offline',
+            prompt: 'consent',
+          },
+        },
+      }),
+    ];
+
+export const { handlers, auth, signIn, signOut } = NextAuth({
+  adapter: isDemoMode ? undefined : PrismaAdapter(prisma),
+  providers,
   callbacks: {
     async jwt({ token, account }) {
       const extToken = token as ExtendedJWT;

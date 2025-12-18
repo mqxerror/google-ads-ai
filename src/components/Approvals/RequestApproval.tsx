@@ -102,7 +102,7 @@ export default function RequestApproval({
     }
   };
 
-  const handleChangeUpdate = (index: number, field: keyof ApprovalChange, value: any) => {
+  const handleChangeUpdate = (index: number, field: keyof ApprovalChange, value: ApprovalChange[keyof ApprovalChange]) => {
     const newChanges = [...changes];
     newChanges[index] = { ...newChanges[index], [field]: value };
     setChanges(newChanges);

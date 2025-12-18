@@ -1,9 +1,115 @@
 import { GoogleAdsApi, Customer } from 'google-ads-api';
 import { calculateAIScoreWithBreakdown } from './ai-score';
 import { CampaignType } from '@/types/campaign';
+import { checkRateLimit, RATE_LIMIT_PRESETS } from './rate-limiter';
+
+// Exponential backoff configuration
+const BACKOFF_CONFIG = {
+  maxRetries: 3,
+  initialDelayMs: 1000,
+  maxDelayMs: 30000,
+  backoffMultiplier: 2,
+};
+
+// Rate limit key generator for Google Ads API
+function getGoogleAdsRateLimitKey(customerId: string): string {
+  return `google-ads:${customerId}`;
+}
+
+/**
+ * Execute a function with exponential backoff retry logic
+ */
+async function withExponentialBackoff<T>(
+  fn: () => Promise<T>,
+  customerId: string,
+  operationName: string
+): Promise<T> {
+  let lastError: Error | undefined;
+  let delay = BACKOFF_CONFIG.initialDelayMs;
+
+  for (let attempt = 0; attempt <= BACKOFF_CONFIG.maxRetries; attempt++) {
+    // Check rate limit before making the request
+    const rateLimitKey = getGoogleAdsRateLimitKey(customerId);
+    const rateLimitResult = checkRateLimit(rateLimitKey, RATE_LIMIT_PRESETS.googleAds);
+
+    if (!rateLimitResult.allowed) {
+      // Wait for rate limit to reset
+      const waitTime = Math.min(rateLimitResult.resetIn, BACKOFF_CONFIG.maxDelayMs);
+      console.log(`[Google Ads] Rate limited for ${customerId}, waiting ${waitTime}ms`);
+      await sleep(waitTime);
+      continue;
+    }
+
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Check if this is a retryable error
+      const isRetryable = isRetryableError(error);
+      const isQuotaError = isQuotaExceededError(error);
+
+      if (!isRetryable && !isQuotaError) {
+        throw error;
+      }
+
+      if (attempt < BACKOFF_CONFIG.maxRetries) {
+        // Apply longer delay for quota errors
+        const actualDelay = isQuotaError ? delay * 2 : delay;
+        console.log(
+          `[Google Ads] ${operationName} failed (attempt ${attempt + 1}/${BACKOFF_CONFIG.maxRetries + 1}), ` +
+          `retrying in ${actualDelay}ms: ${lastError.message}`
+        );
+        await sleep(actualDelay);
+        delay = Math.min(delay * BACKOFF_CONFIG.backoffMultiplier, BACKOFF_CONFIG.maxDelayMs);
+      }
+    }
+  }
+
+  throw lastError || new Error(`${operationName} failed after ${BACKOFF_CONFIG.maxRetries + 1} attempts`);
+}
+
+/**
+ * Check if error is retryable
+ */
+function isRetryableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const message = error.message.toLowerCase();
+  const retryablePatterns = [
+    'rate limit',
+    'timeout',
+    'temporarily unavailable',
+    'internal error',
+    'service unavailable',
+    'connection',
+    'econnreset',
+    'socket hang up',
+  ];
+
+  return retryablePatterns.some(pattern => message.includes(pattern));
+}
+
+/**
+ * Check if error is quota exceeded
+ */
+function isQuotaExceededError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const message = error.message.toLowerCase();
+  return message.includes('quota') || message.includes('resource_exhausted');
+}
+
+/**
+ * Sleep for specified milliseconds
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 // Create Google Ads API client
-export function createGoogleAdsClient(refreshToken: string) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function createGoogleAdsClient(_refreshToken: string) {
   return new GoogleAdsApi({
     client_id: process.env.GOOGLE_CLIENT_ID!,
     client_secret: process.env.GOOGLE_CLIENT_SECRET!,
@@ -135,25 +241,30 @@ export async function fetchCampaigns(
   }
 
   try {
-    const campaigns = await customer.query(`
-      SELECT
-        campaign.id,
-        campaign.name,
-        campaign.status,
-        campaign.advertising_channel_type,
-        campaign.bidding_strategy_type,
-        metrics.impressions,
-        metrics.clicks,
-        metrics.cost_micros,
-        metrics.conversions,
-        metrics.conversions_value,
-        metrics.ctr,
-        metrics.average_cpc
-      FROM campaign
-      WHERE campaign.status != 'REMOVED'
-        ${dateClause}
-      ORDER BY metrics.cost_micros DESC
-    `);
+    // Wrap API call with exponential backoff for resilience
+    const campaigns = await withExponentialBackoff(
+      () => customer.query(`
+        SELECT
+          campaign.id,
+          campaign.name,
+          campaign.status,
+          campaign.advertising_channel_type,
+          campaign.bidding_strategy_type,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros,
+          metrics.conversions,
+          metrics.conversions_value,
+          metrics.ctr,
+          metrics.average_cpc
+        FROM campaign
+        WHERE campaign.status != 'REMOVED'
+          ${dateClause}
+        ORDER BY metrics.cost_micros DESC
+      `),
+      customerId,
+      'fetchCampaigns'
+    );
 
     return campaigns.map((row) => {
       const spend = (row.metrics?.cost_micros || 0) / 1_000_000;

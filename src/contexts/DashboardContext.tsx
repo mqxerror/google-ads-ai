@@ -46,40 +46,38 @@ const DEFAULT_WIDGETS: WidgetConfig[] = [
 
 const STORAGE_KEY = 'dashboard-widgets-config';
 
+// Initialize widgets from localStorage (SSR-safe)
+function getInitialWidgets(): WidgetConfig[] {
+  if (typeof window === 'undefined') return DEFAULT_WIDGETS;
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Merge with defaults to handle new widgets added in updates
+      return DEFAULT_WIDGETS.map(defaultWidget => {
+        const savedWidget = parsed.find((w: WidgetConfig) => w.id === defaultWidget.id);
+        return savedWidget ? { ...defaultWidget, ...savedWidget } : defaultWidget;
+      });
+    }
+  } catch {
+    // Ignore errors
+  }
+  return DEFAULT_WIDGETS;
+}
+
 export function DashboardProvider({ children }: { children: ReactNode }) {
-  const [widgets, setWidgets] = useState<WidgetConfig[]>(DEFAULT_WIDGETS);
+  const [widgets, setWidgets] = useState<WidgetConfig[]>(getInitialWidgets);
   const [isCustomizing, setIsCustomizing] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
 
-  // Load from localStorage on mount
+  // Save to localStorage when widgets change
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Merge with defaults to handle new widgets added in updates
-        const merged = DEFAULT_WIDGETS.map(defaultWidget => {
-          const savedWidget = parsed.find((w: WidgetConfig) => w.id === defaultWidget.id);
-          return savedWidget ? { ...defaultWidget, ...savedWidget } : defaultWidget;
-        });
-        setWidgets(merged);
-      }
-    } catch (e) {
-      console.error('Failed to load dashboard config:', e);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(widgets));
+    } catch {
+      // Ignore storage errors
     }
-    setIsInitialized(true);
-  }, []);
-
-  // Save to localStorage when widgets change (after initialization)
-  useEffect(() => {
-    if (isInitialized) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(widgets));
-      } catch (e) {
-        console.error('Failed to save dashboard config:', e);
-      }
-    }
-  }, [widgets, isInitialized]);
+  }, [widgets]);
 
   const toggleWidget = useCallback((widgetId: string) => {
     setWidgets(prev => prev.map(w =>

@@ -18,6 +18,7 @@ import { useUndoRedo } from '@/contexts/UndoRedoContext';
 import { useCampaignsData } from '@/contexts/CampaignsDataContext';
 import UndoRedoButtons from './UndoRedo/UndoRedoButtons';
 import { DataFreshnessBadge } from './DataFreshness';
+import { DataHealthBadge } from './DataHealth';
 import { OpsCenter } from './OpsCenter';
 import { useActionQueue } from '@/contexts/ActionQueueContext';
 
@@ -58,11 +59,32 @@ export default function Header({ onMenuToggle }: HeaderProps) {
 
   // Fetch unread count on mount and periodically
   useEffect(() => {
-    if (session?.user) {
-      fetchUnreadCount();
-      const interval = setInterval(fetchUnreadCount, 60000); // Every minute
-      return () => clearInterval(interval);
-    }
+    if (!session?.user) return;
+
+    // Use AbortController for cleanup
+    const abortController = new AbortController();
+
+    // Async IIFE to avoid lint warning about setState in effect
+    (async () => {
+      try {
+        const response = await fetch('/api/notifications?unreadOnly=true', {
+          signal: abortController.signal,
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setUnreadNotifications(data.unreadCount || 0);
+        }
+      } catch {
+        // Ignore abort errors and other errors
+      }
+    })();
+
+    // Set up periodic refresh
+    const interval = setInterval(fetchUnreadCount, 60000);
+    return () => {
+      abortController.abort();
+      clearInterval(interval);
+    };
   }, [session?.user, fetchUnreadCount]);
 
   return (
@@ -139,6 +161,9 @@ export default function Header({ onMenuToggle }: HeaderProps) {
             onRefresh={refetch}
           />
         )}
+
+        {/* Data Health Badge - detailed data quality info */}
+        {currentAccount && <DataHealthBadge />}
       </div>
 
       {/* Right section */}

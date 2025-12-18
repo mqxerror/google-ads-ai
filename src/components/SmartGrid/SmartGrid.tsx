@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Campaign, SortConfig, FilterConfig } from '@/types/campaign';
 import { useAccount } from '@/contexts/AccountContext';
 import { useDrillDown } from '@/contexts/DrillDownContext';
@@ -9,13 +9,17 @@ import { useActionQueue } from '@/contexts/ActionQueueContext';
 import { useGuardrails } from '@/contexts/GuardrailsContext';
 import { DetailPanel } from '@/components/DetailPanel';
 import GuardrailWarningDialog from '@/components/GuardrailWarningDialog';
+import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import GridHeader from './GridHeader';
 import GridRow from './GridRow';
 import GridSkeleton from './GridSkeleton';
 import EmptyState from './EmptyState';
-import FilterPanel from './FilterPanel';
-import ViewTabs from './ViewTabs';
+import FilterDrawer from './FilterDrawer';
+import ActiveFilterChips from './ActiveFilterChips';
+import ViewsDropdown from './ViewsDropdown';
 import Breadcrumbs from './Breadcrumbs';
+import { AIDock } from '@/components/AIDock';
+import { FixPanel } from '@/components/FixPanel';
 import AdGroupsGrid from './AdGroupsGrid';
 import AdGroupContentTabs from './AdGroupContentTabs';
 import BulkActionsBar from './BulkActionsBar';
@@ -23,14 +27,49 @@ import MobileCardView from './MobileCardView';
 import VirtualizedGrid, { useVirtualization } from './VirtualizedGrid';
 import { Recommendation } from '@/lib/recommendations';
 import { checkActionGuardrails, checkBulkActionsGuardrails, GuardrailResult, ActionWithAIScore } from '@/lib/guardrails';
-import { QueuedAction } from '@/types/action-queue';
+import { CampaignIssue } from '@/types/health';
 import DateRangePicker, { DateRange, getDefaultDateRange } from '@/components/DateRangePicker';
-import AIInsightsPanel from '@/components/AIInsightsPanel';
 import { CampaignEditor } from '@/components/CampaignEditor';
 import { BudgetManager } from '@/components/BudgetManager';
 
 // Type for pending action before guardrail check - reuse the exported type from guardrails
 type PendingActionData = ActionWithAIScore;
+
+// Grid settings persistence
+const GRID_SETTINGS_KEY = 'smartgrid-settings';
+
+interface GridSettings {
+  sortConfig: SortConfig;
+  filters: FilterConfig;
+  activeView: string;
+  dateRange: DateRange;
+  searchQuery: string;
+  showFilters: boolean;
+}
+
+function saveGridSettings(accountId: string, settings: GridSettings): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = `${GRID_SETTINGS_KEY}-${accountId}`;
+    sessionStorage.setItem(key, JSON.stringify(settings));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function loadGridSettings(accountId: string): GridSettings | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const key = `${GRID_SETTINGS_KEY}-${accountId}`;
+    const saved = sessionStorage.getItem(key);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch {
+    // Ignore parse errors
+  }
+  return null;
+}
 
 export default function SmartGrid() {
   const { currentAccount, isSyncing } = useAccount();
@@ -48,12 +87,53 @@ export default function SmartGrid() {
   const [activeView, setActiveView] = useState('all');
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
   const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
-  const [isAIInsightsOpen, setIsAIInsightsOpen] = useState(false);
   const [isCampaignEditorOpen, setIsCampaignEditorOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [isBudgetManagerOpen, setIsBudgetManagerOpen] = useState(false);
   const [budgetCampaign, setBudgetCampaign] = useState<Campaign | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isAIDockOpen, setIsAIDockOpen] = useState(false);
+  const [dockCampaign, setDockCampaign] = useState<Campaign | null>(null);
+  const [dockIssue, setDockIssue] = useState<CampaignIssue | null>(null);
+
+  // Fix Panel state - docked panel for reviewing fixes
+  const [isFixPanelOpen, setIsFixPanelOpen] = useState(false);
+  const [fixPanelCampaign, setFixPanelCampaign] = useState<Campaign | null>(null);
+  const [fixPanelIssue, setFixPanelIssue] = useState<CampaignIssue | null>(null);
+
+  // Track which account settings have been restored for
+  const restoredForAccountRef = useRef<string | null>(null);
+
+  // Restore settings from storage when account changes
+  useEffect(() => {
+    if (!currentAccount?.id) return;
+    if (restoredForAccountRef.current === currentAccount.id) return;
+
+    const saved = loadGridSettings(currentAccount.id);
+    if (saved) {
+      setSortConfig(saved.sortConfig);
+      setFilters(saved.filters);
+      setActiveView(saved.activeView);
+      setDateRange(saved.dateRange);
+      setSearchQuery(saved.searchQuery);
+      setShowFilters(saved.showFilters);
+    }
+    restoredForAccountRef.current = currentAccount.id;
+  }, [currentAccount?.id]);
+
+  // Save settings whenever they change
+  useEffect(() => {
+    if (!currentAccount?.id || restoredForAccountRef.current !== currentAccount.id) return;
+
+    saveGridSettings(currentAccount.id, {
+      sortConfig,
+      filters,
+      activeView,
+      dateRange,
+      searchQuery,
+      showFilters,
+    });
+  }, [currentAccount?.id, sortConfig, filters, activeView, dateRange, searchQuery, showFilters]);
 
   // Guardrail state
   const [guardrailDialogOpen, setGuardrailDialogOpen] = useState(false);
@@ -442,6 +522,41 @@ export default function SmartGrid() {
     v !== undefined && (Array.isArray(v) ? v.length > 0 : true)
   ).length;
 
+  // Helper to remove individual filters
+  const handleRemoveFilter = (key: keyof FilterConfig, value?: string) => {
+    const newFilters = { ...filters };
+    if (key === 'status' && value && Array.isArray(newFilters.status)) {
+      newFilters.status = newFilters.status.filter(s => s !== value);
+      if (newFilters.status.length === 0) delete newFilters.status;
+    } else if (key === 'type' && value && Array.isArray(newFilters.type)) {
+      newFilters.type = newFilters.type.filter(t => t !== value);
+      if (newFilters.type.length === 0) delete newFilters.type;
+    } else if (key === 'spendMin' || key === 'spendMax') {
+      delete newFilters.spendMin;
+      delete newFilters.spendMax;
+    } else if (key === 'aiScoreMin' || key === 'aiScoreMax') {
+      delete newFilters.aiScoreMin;
+      delete newFilters.aiScoreMax;
+    } else if (key === 'conversionsMin' || key === 'conversionsMax') {
+      delete newFilters.conversionsMin;
+      delete newFilters.conversionsMax;
+    }
+    setFilters(newFilters);
+  };
+
+  // Calculate view counts
+  const viewCounts = useMemo(() => {
+    const enabledCampaigns = campaigns.filter(c => c.status === 'ENABLED');
+    return {
+      all: campaigns.length,
+      needs_attention: enabledCampaigns.filter(c => (c.aiScore || c.health?.score || 100) < 50).length,
+      wasted_spend: enabledCampaigns.filter(c => c.spend > 100 && c.conversions === 0).length,
+      scaling: enabledCampaigns.filter(c => (c.aiScore || c.health?.score || 0) >= 75).length,
+      top_performers: enabledCampaigns.filter(c => c.conversions >= 10).length,
+      tracking: enabledCampaigns.filter(c => c.health?.issues?.some(i => i.category === 'tracking')).length,
+    };
+  }, [campaigns]);
+
   const summaryStats = useMemo(() => {
     const filtered = sortedCampaigns;
     return {
@@ -485,9 +600,8 @@ export default function SmartGrid() {
     );
   };
 
-  if (isLoading || isSyncing) {
-    return <GridSkeleton />;
-  }
+  // Determine if this is initial load (no cached data)
+  const isInitialLoad = (isLoading || isSyncing) && campaigns.length === 0;
 
   // Render different grids based on current level
   const renderGrid = () => {
@@ -516,11 +630,19 @@ export default function SmartGrid() {
         return <AdGroupContentTabs />;
       default:
         // Campaigns grid
+        // Show skeleton only on initial load with no data
+        if (isInitialLoad) {
+          return <GridSkeleton />;
+        }
         if (sortedCampaigns.length === 0) {
           return <EmptyState />;
         }
         return (
-          <>
+          <div className="relative">
+            {/* Loading overlay for refetch - shows over existing data */}
+            {(isLoading || isSyncing) && campaigns.length > 0 && (
+              <LoadingOverlay message="Refreshing data..." opacity={70} />
+            )}
             {/* Mobile Card View - visible on small screens */}
             <MobileCardView
               campaigns={sortedCampaigns}
@@ -552,7 +674,12 @@ export default function SmartGrid() {
                     setIsBudgetManagerOpen(true);
                   }}
                   onUpdateCampaign={handleUpdateCampaign}
-                  onRecommendationAction={handleRecommendationAction}
+                  onIssueClick={(campaign, issue) => {
+                    // Open the docked FixPanel instead of overlay
+                    setFixPanelCampaign(campaign);
+                    setFixPanelIssue(issue);
+                    setIsFixPanelOpen(true);
+                  }}
                 />
               ) : (
                 <table className="w-full min-w-[900px]">
@@ -562,7 +689,7 @@ export default function SmartGrid() {
                     allSelected={selectedIds.size === sortedCampaigns.length && sortedCampaigns.length > 0}
                     onSelectAll={handleSelectAll}
                   />
-                  <tbody className="divide-y divide-slate-200">
+                  <tbody>
                     {sortedCampaigns.map((campaign) => (
                       <GridRow
                         key={campaign.id}
@@ -577,61 +704,40 @@ export default function SmartGrid() {
                           setIsBudgetManagerOpen(true);
                         }}
                         onUpdateCampaign={handleUpdateCampaign}
-                        onRecommendationAction={handleRecommendationAction}
+                        onIssueClick={(campaign, issue) => {
+                          // Open the docked FixPanel instead of overlay
+                          setFixPanelCampaign(campaign);
+                          setFixPanelIssue(issue);
+                          setIsFixPanelOpen(true);
+                        }}
                       />
                     ))}
                   </tbody>
                 </table>
               )}
             </div>
-          </>
+          </div>
         );
     }
   };
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 p-4">
-        {/* Entity Selector - now shows current level */}
-        <div className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700">
-          <svg className="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-          </svg>
+    <div className="flex h-full">
+      {/* Main content area - table */}
+      <div className={`apple-card shadow-md flex-1 min-w-0 transition-all duration-300 ${isFixPanelOpen ? 'mr-0' : ''}`}>
+      {/* Apple-style Control Bar - 44px height */}
+      <div className="h-11 flex items-center gap-4 px-4 border-b border-[var(--divider)]">
+        {/* Left: Title */}
+        <h1 className="text-[15px] font-semibold text-[var(--text)]">
           {currentLevel === 'campaigns' && 'Campaigns'}
           {currentLevel === 'adGroups' && 'Ad Groups'}
           {currentLevel === 'keywords' && 'Keywords'}
-        </div>
+        </h1>
 
-        {/* Date Range */}
-        <DateRangePicker value={dateRange} onChange={setDateRange} />
-
-        {/* Filter Button - only show for campaigns */}
-        {currentLevel === 'campaigns' && (
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors ${
-              activeFiltersCount > 0
-                ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-            }`}
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-            </svg>
-            Filters
-            {activeFiltersCount > 0 && (
-              <span className="rounded-full bg-indigo-600 px-1.5 py-0.5 text-xs font-semibold text-white">
-                {activeFiltersCount}
-              </span>
-            )}
-          </button>
-        )}
-
-        {/* Search */}
-        <div className="flex-1">
-          <div className="relative max-w-md">
-            <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        {/* Center: Search - filled style, no border */}
+        <div className="flex-1 max-w-sm">
+          <div className="relative">
+            <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text3)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
             <input
@@ -639,12 +745,12 @@ export default function SmartGrid() {
               placeholder={`Search ${currentLevel}...`}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 py-2.5 pl-10 pr-4 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+              className="w-full h-8 rounded-lg bg-[var(--surface2)] border-none py-0 pl-9 pr-8 text-[13px] text-[var(--text)] placeholder:text-[var(--text3)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:ring-opacity-30"
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text3)] hover:text-[var(--text2)]"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -654,45 +760,51 @@ export default function SmartGrid() {
           </div>
         </div>
 
-        {/* Create Campaign Button */}
-        {currentLevel === 'campaigns' && currentAccount && (
-          <button
-            onClick={() => {
-              setEditingCampaign(null);
-              setIsCampaignEditorOpen(true);
-            }}
-            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 transition-colors"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Create Campaign
-          </button>
-        )}
-
-        {/* AI Insights Button - only for campaigns */}
-        {currentLevel === 'campaigns' && campaigns.length > 0 && (
-          <button
-            onClick={() => setIsAIInsightsOpen(true)}
-            className="flex items-center gap-2 rounded-lg border border-violet-300 bg-violet-50 px-3 py-2.5 text-sm font-semibold text-violet-700 hover:bg-violet-100 transition-colors"
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-            </svg>
-            AI Insights
-          </button>
-        )}
-
-        {/* Refresh Button */}
-        <button
-          onClick={() => window.location.reload()}
-          className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          Refresh
-        </button>
+        {/* Right: Actions */}
+        <div className="flex items-center gap-2">
+          <DateRangePicker value={dateRange} onChange={setDateRange} />
+          {currentLevel === 'campaigns' && (
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`btn-tertiary ${activeFiltersCount > 0 ? 'text-[var(--accent)]' : ''}`}
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+              </svg>
+              {activeFiltersCount > 0 && (
+                <span className="min-w-[18px] h-[18px] rounded-full bg-[var(--accent)] px-1 text-[10px] font-bold text-white flex items-center justify-center">{activeFiltersCount}</span>
+              )}
+            </button>
+          )}
+          {currentLevel === 'campaigns' && currentAccount && (
+            <button
+              onClick={() => {
+                setEditingCampaign(null);
+                setIsCampaignEditorOpen(true);
+              }}
+              className="btn-secondary h-8 px-3 text-[13px]"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              New
+            </button>
+          )}
+          {currentLevel === 'campaigns' && campaigns.length > 0 && (
+            <button
+              onClick={() => {
+                setDockCampaign(null);
+                setIsAIDockOpen(true);
+              }}
+              className="btn-primary h-8 px-3 text-[13px]"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+              AI
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Error State */}
@@ -705,22 +817,29 @@ export default function SmartGrid() {
       {/* Breadcrumbs - show when drilled down */}
       <Breadcrumbs />
 
-      {/* Filter Panel - only for campaigns */}
-      {showFilters && currentLevel === 'campaigns' && (
-        <FilterPanel
-          filters={filters}
-          onFiltersChange={setFilters}
-          onClose={() => setShowFilters(false)}
+      {/* Filter Drawer - slides in from right */}
+      <FilterDrawer
+        isOpen={showFilters}
+        onClose={() => setShowFilters(false)}
+        filters={filters}
+        onFiltersChange={setFilters}
+      />
+
+      {/* Views Dropdown - only for campaigns */}
+      {currentLevel === 'campaigns' && (
+        <ViewsDropdown
+          activeView={activeView}
+          onViewChange={handleViewChange}
+          counts={viewCounts}
         />
       )}
 
-      {/* Views Tab Bar - only for campaigns */}
-      {currentLevel === 'campaigns' && (
-        <ViewTabs
-          activeView={activeView}
-          onViewChange={handleViewChange}
-          currentFilters={filters}
-          currentSorting={sortConfig}
+      {/* Active Filter Chips - shown when filters applied */}
+      {currentLevel === 'campaigns' && activeFiltersCount > 0 && (
+        <ActiveFilterChips
+          filters={filters}
+          onRemoveFilter={handleRemoveFilter}
+          onClearAll={() => setFilters({})}
         />
       )}
 
@@ -757,20 +876,20 @@ export default function SmartGrid() {
       {/* Grid */}
       {renderGrid()}
 
-      {/* Footer - only for campaigns */}
+      {/* Footer - Apple style */}
       {currentLevel === 'campaigns' && sortedCampaigns.length > 0 && (
-        <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/50 px-4 py-3.5 text-sm">
-          <div className="flex items-center gap-4 text-slate-600">
+        <div className="flex items-center justify-between border-t border-[var(--divider)] bg-[var(--surface)] px-4 py-3 text-[13px]">
+          <div className="flex items-center gap-4 text-[var(--text2)]">
             <span className="font-medium">{sortedCampaigns.length} campaign{sortedCampaigns.length !== 1 ? 's' : ''}</span>
             {selectedIds.size > 0 && (
-              <span className="font-semibold text-indigo-600">
+              <span className="font-semibold text-[var(--accent)]">
                 ({selectedIds.size} selected)
               </span>
             )}
           </div>
-          <div className="flex items-center gap-6 text-slate-600">
-            <span>Total Spend: <strong className="text-slate-900">${summaryStats.totalSpend.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></span>
-            <span>Total Conv: <strong className="text-slate-900">{summaryStats.totalConversions.toFixed(0)}</strong></span>
+          <div className="flex items-center gap-6 text-[var(--text2)]">
+            <span>Spend: <strong className="text-[var(--text)] tabular-nums">${summaryStats.totalSpend.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</strong></span>
+            <span>Conv: <strong className="text-[var(--text)] tabular-nums">{summaryStats.totalConversions.toFixed(0)}</strong></span>
           </div>
         </div>
       )}
@@ -808,12 +927,6 @@ export default function SmartGrid() {
         />
       )}
 
-      {/* AI Insights Panel */}
-      <AIInsightsPanel
-        campaigns={campaigns}
-        isOpen={isAIInsightsOpen}
-        onClose={() => setIsAIInsightsOpen(false)}
-      />
 
       {/* Campaign Editor */}
       <CampaignEditor
@@ -834,6 +947,34 @@ export default function SmartGrid() {
         }}
         campaign={budgetCampaign}
       />
+
+      {/* AI Dock - unified AI interface */}
+      <AIDock
+        isOpen={isAIDockOpen}
+        onClose={() => {
+          setIsAIDockOpen(false);
+          setDockCampaign(null);
+          setDockIssue(null);
+        }}
+        campaign={dockCampaign}
+        issue={dockIssue}
+        selectedCampaigns={selectedIds.size > 1 ? campaigns.filter(c => selectedIds.has(c.id)) : undefined}
+      />
+      </div>
+
+      {/* Docked Fix Panel - sits alongside table */}
+      {isFixPanelOpen && fixPanelCampaign && fixPanelIssue && (
+        <FixPanel
+          isOpen={isFixPanelOpen}
+          onClose={() => {
+            setIsFixPanelOpen(false);
+            setFixPanelCampaign(null);
+            setFixPanelIssue(null);
+          }}
+          campaign={fixPanelCampaign}
+          issue={fixPanelIssue}
+        />
+      )}
     </div>
   );
 }

@@ -61,6 +61,9 @@ export interface AdGroup {
   spend: number;
 }
 
+// Quality Score component ratings
+export type QualityScoreRating = 'ABOVE_AVERAGE' | 'AVERAGE' | 'BELOW_AVERAGE' | 'UNKNOWN';
+
 export interface Keyword {
   id: string;
   adGroupId: string;
@@ -72,6 +75,10 @@ export interface Keyword {
   cpa: number;
   qualityScore: number;
   spend: number;
+  // Quality Score breakdown components
+  expectedCtr?: QualityScoreRating;
+  adRelevance?: QualityScoreRating;
+  landingPageExperience?: QualityScoreRating;
 }
 
 export type SortDirection = 'asc' | 'desc';

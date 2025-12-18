@@ -122,6 +122,48 @@ function ActionItem({ action, onApprove, onReject, onRemove }: {
   );
 }
 
+// Impact summary component
+function ImpactSummary({ actions }: { actions: QueuedAction[] }) {
+  const activeActions = actions.filter(a => a.status === 'pending' || a.status === 'approved');
+
+  if (activeActions.length === 0) return null;
+
+  // Group by action type
+  const actionGroups = activeActions.reduce((acc, action) => {
+    acc[action.actionType] = (acc[action.actionType] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  // Count high risk actions
+  const highRiskCount = activeActions.filter(a => a.riskLevel === 'high').length;
+
+  return (
+    <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg p-3 border border-indigo-100">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">Impact Summary</span>
+        {highRiskCount > 0 && (
+          <span className="text-xs font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+            {highRiskCount} high risk
+          </span>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(actionGroups).map(([type, count]) => (
+          <div key={type} className="bg-white rounded-md px-2 py-1 text-xs border border-indigo-100">
+            <span className="font-medium text-indigo-900">{count}x</span>
+            <span className="text-indigo-600 ml-1">{getActionLabel(type as QueuedAction['actionType'])}</span>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-indigo-600 mt-2">
+        {activeActions.length} action{activeActions.length > 1 ? 's' : ''} affecting {
+          new Set(activeActions.map(a => a.entityId)).size
+        } entit{new Set(activeActions.map(a => a.entityId)).size > 1 ? 'ies' : 'y'}
+      </p>
+    </div>
+  );
+}
+
 export default function ActionQueueDrawer({ isOpen, onClose }: ActionQueueDrawerProps) {
   const {
     actions,
@@ -196,6 +238,9 @@ export default function ActionQueueDrawer({ isOpen, onClose }: ActionQueueDrawer
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4">
+          {/* Impact Summary */}
+          <ImpactSummary actions={actions} />
+
           {actions.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gray-100">

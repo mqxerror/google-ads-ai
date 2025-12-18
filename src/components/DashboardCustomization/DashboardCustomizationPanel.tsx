@@ -32,27 +32,28 @@ const DEFAULT_WIDGETS: DashboardWidget[] = [
 
 const STORAGE_KEY = 'google-ads-dashboard-widgets';
 
-export default function DashboardCustomizationPanel({ isOpen, onClose, onSave }: DashboardCustomizationPanelProps) {
-  const [widgets, setWidgets] = useState<DashboardWidget[]>(DEFAULT_WIDGETS);
-  const [draggedWidget, setDraggedWidget] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Load saved configuration
+// Initialize widgets from localStorage (SSR-safe)
+function getInitialWidgets(): DashboardWidget[] {
+  if (typeof window === 'undefined') return DEFAULT_WIDGETS;
+  try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        // Merge with defaults to handle new widgets
-        const merged = DEFAULT_WIDGETS.map(defaultWidget => {
-          const savedWidget = parsed.find((w: DashboardWidget) => w.id === defaultWidget.id);
-          return savedWidget || defaultWidget;
-        });
-        setWidgets(merged);
-      } catch {
-        setWidgets(DEFAULT_WIDGETS);
-      }
+      const parsed = JSON.parse(saved);
+      // Merge with defaults to handle new widgets
+      return DEFAULT_WIDGETS.map(defaultWidget => {
+        const savedWidget = parsed.find((w: DashboardWidget) => w.id === defaultWidget.id);
+        return savedWidget || defaultWidget;
+      });
     }
-  }, []);
+  } catch {
+    // Ignore errors
+  }
+  return DEFAULT_WIDGETS;
+}
+
+export default function DashboardCustomizationPanel({ isOpen, onClose, onSave }: DashboardCustomizationPanelProps) {
+  const [widgets, setWidgets] = useState<DashboardWidget[]>(getInitialWidgets);
+  const [draggedWidget, setDraggedWidget] = useState<string | null>(null);
 
   const handleToggle = (widgetId: string) => {
     setWidgets(prev =>

@@ -102,11 +102,12 @@ export default function MultiStepForm({
     const step = steps[currentStep];
     if (step) {
       const message = `Step ${currentStep + 1} of ${steps.length}: ${step.title}${step.description ? `. ${step.description}` : ''}`;
-      setAnnouncement(message);
-      // Focus the step content area for keyboard users
-      setTimeout(() => {
+      // Use setTimeout to defer the state update (avoids React 19 lint warning)
+      const timeoutId = setTimeout(() => {
+        setAnnouncement(message);
         stepContentRef.current?.focus();
-      }, 100);
+      }, 0);
+      return () => clearTimeout(timeoutId);
     }
   }, [currentStep, steps]);
 

@@ -1,18 +1,69 @@
 @import 'tailwindcss';
 
+/* ============================================
+   Apple-Style Design System
+   ============================================ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-  --card: #ffffff;
-  --card-foreground: #171717;
-  --border: #e5e7eb;
-  --primary: #2563eb;
-  --primary-foreground: #ffffff;
-  --muted: #f3f4f6;
-  --muted-foreground: #6b7280;
+  /* Apple Neutrals */
+  --bg: #F5F5F7;
+  --surface: #FFFFFF;
+  --surface2: #F2F2F7;
+  --surface3: #EDEDF2;
+  --divider: #E5E5EA;
+  --text: #1D1D1F;
+  --text2: #6E6E73;
+  --text3: #8E8E93;
+
+  /* Accent */
+  --accent: #0A84FF;
+  --accent-hover: #0077ED;
+  --accent-light: rgba(10, 132, 255, 0.08);
+
+  /* Semantic Colors (sparingly) */
+  --success: #34C759;
+  --warning: #FF9F0A;
+  --danger: #FF453A;
+
+  /* Legacy compatibility */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --border: var(--divider);
+  --primary: var(--accent);
+  --primary-foreground: #FFFFFF;
+  --muted: var(--surface2);
+  --muted-foreground: var(--text2);
+
+  /* Apple-style shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.10);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
+
+  /* Apple-style radii */
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
 }
 
 @theme inline {
+  /* Apple Colors */
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface2: var(--surface2);
+  --color-surface3: var(--surface3);
+  --color-divider: var(--divider);
+  --color-text: var(--text);
+  --color-text2: var(--text2);
+  --color-text3: var(--text3);
+  --color-accent: var(--accent);
+  --color-accent-light: var(--accent-light);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  /* Legacy theme colors */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -22,131 +73,544 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
-  --font-sans: var(--font-geist-sans);
+
+  /* Typography */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "SF Pro Text", "SF Pro Display", Inter, sans-serif;
   --font-mono: var(--font-geist-mono);
 }
 
+/* ============================================
+   Base Styles
+   ============================================ */
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "SF Pro Text", "SF Pro Display", Inter, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar styling */
+/* ============================================
+   Scrollbar (Apple-style thin scrollbars)
+   ============================================ */
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--muted);
-  border-radius: 4px;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--muted-foreground);
+  background: var(--text3);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+  background: var(--text2);
 }
 
-/* Focus styles */
+/* ============================================
+   Focus & Selection
+   ============================================ */
+
 *:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-/* Selection styling */
 ::selection {
-  background-color: var(--primary);
-  color: var(--primary-foreground);
+  background-color: var(--accent);
+  color: white;
 }
 
-/* Smooth transitions for all color changes */
-* {
-  transition-property: background-color, border-color;
-  transition-duration: 0.15s;
-  transition-timing-function: ease-in-out;
+/* ============================================
+   Typography Utilities
+   ============================================ */
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
 }
 
-/* Shimmer animation for skeleton loading states */
+.text-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.text-section {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.text-body {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text);
+}
+
+.text-caption {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text2);
+}
+
+.text-micro {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ============================================
+   Apple Table Styles
+   ============================================ */
+
+.apple-table {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.apple-table-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--divider);
+}
+
+.apple-table-header th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 12px 16px;
+}
+
+.apple-table-row {
+  height: 56px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--surface);
+  transition: background-color 0.15s ease;
+}
+
+.apple-table-row:hover {
+  background: var(--surface2);
+}
+
+.apple-table-row.selected {
+  background: var(--accent-light);
+}
+
+.apple-table-row:last-child {
+  border-bottom: none;
+}
+
+.apple-table-cell {
+  padding: 0 16px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.numeric-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================
+   Apple Health Badge (dot + label + score)
+   ============================================ */
+
+.health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 4px 8px;
+  background: var(--surface2);
+  border-radius: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.health-dot.healthy { background: var(--success); }
+.health-dot.warning { background: var(--warning); }
+.health-dot.critical { background: var(--danger); }
+
+.health-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text2);
+}
+
+.health-score {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================
+   Apple Issue Pill (neutral with left border)
+   ============================================ */
+
+.issue-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--surface2);
+  border-radius: 8px;
+  border-left: 2px solid transparent;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
+  transition: all 0.15s ease;
+}
+
+.issue-pill:hover {
+  background: var(--surface3);
+}
+
+.issue-pill.danger { border-left-color: var(--danger); }
+.issue-pill.warning { border-left-color: var(--warning); }
+.issue-pill.info { border-left-color: var(--accent); }
+
+.issue-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--surface3);
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+}
+
+/* ============================================
+   Apple Buttons
+   ============================================ */
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 16px;
+  background: var(--accent);
+  color: white;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 16px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-secondary:hover {
+  background: var(--surface3);
+}
+
+.btn-tertiary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--text2);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-tertiary:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  color: var(--text3);
+  border-radius: var(--radius-sm);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-icon:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+/* ============================================
+   Apple Cards & Panels
+   ============================================ */
+
+.apple-card {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.apple-panel {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.apple-dock {
+  background: var(--surface);
+  border-left: 1px solid var(--divider);
+  box-shadow: var(--shadow-lg);
+}
+
+/* ============================================
+   Apple Dividers
+   ============================================ */
+
+.divider {
+  height: 1px;
+  background: var(--divider);
+}
+
+.divider-vertical {
+  width: 1px;
+  background: var(--divider);
+}
+
+/* ============================================
+   Apple Control Bar
+   ============================================ */
+
+.control-bar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--divider);
+}
+
+/* ============================================
+   Apple Diff Preview
+   ============================================ */
+
+.diff-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+}
+
+.diff-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text2);
+  flex: 1;
+}
+
+.diff-old {
+  font-size: 13px;
+  color: var(--text3);
+  text-decoration: line-through;
+}
+
+.diff-arrow {
+  color: var(--text3);
+}
+
+.diff-new {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ============================================
+   Evidence List (Settings-like)
+   ============================================ */
+
+.evidence-row {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--divider);
+  transition: background-color 0.15s ease;
+}
+
+.evidence-row:hover {
+  background: var(--surface2);
+}
+
+.evidence-row:last-child {
+  border-bottom: none;
+}
+
+.evidence-query {
+  flex: 1;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.evidence-metrics {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================
+   Animations
+   ============================================ */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 @keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.15s ease-out;
+}
+
+.animate-slideIn {
+  animation: slideInRight 0.2s ease-out;
 }
 
 .animate-shimmer {
   animation: shimmer 2s infinite linear;
 }
 
-/* Tabular numbers for data grids */
-.tabular-nums {
-  font-variant-numeric: tabular-nums;
+.grid-fade-in {
+  animation: fadeIn 0.2s ease-out;
 }
 
-/* Compact table rows */
-.compact-row td {
-  padding-top: 0.5rem;
-  padding-bottom: 0.5rem;
+.loading-overlay {
+  animation: fadeIn 0.15s ease-out;
 }
 
-/* Right-align numeric columns */
-.numeric-cell {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+/* ============================================
+   Row Hover Actions
+   ============================================ */
+
+.row-actions {
+  opacity: 0;
+  transition: opacity 0.15s ease;
 }
 
-/* Health badge styles */
-.health-badge {
-  font-variant-numeric: tabular-nums;
+.apple-table-row:hover .row-actions {
+  opacity: 1;
 }
 
-/* Issue chip hover effect */
-.issue-chip {
-  transition: transform 0.1s ease-in-out, box-shadow 0.1s ease-in-out;
+/* ============================================
+   AI Dock Subtle Styling (Option B)
+   ============================================ */
+
+.ai-dock-header {
+  background: linear-gradient(180deg, var(--surface2) 0%, var(--surface) 100%);
+  border-bottom: 1px solid var(--divider);
 }
 
-.issue-chip:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+.ai-sparkle {
+  color: var(--accent);
 }
 
-/* Sparkline container */
-.sparkline-container {
-  min-width: 60px;
-}
+/* ============================================
+   Responsive Typography
+   ============================================ */
 
-/* AI accent color for AI-powered features */
-.ai-accent {
-  color: var(--primary);
-}
-
-.ai-badge {
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-  color: white;
-}
-
-/* Responsive typography */
 @media (max-width: 640px) {
-  html {
-    font-size: 14px;
-  }
+  html { font-size: 14px; }
 }
 
 @media (min-width: 641px) and (max-width: 1024px) {
-  html {
-    font-size: 15px;
-  }
+  html { font-size: 15px; }
 }
 
 @media (min-width: 1025px) {
-  html {
-    font-size: 16px;
-  }
+  html { font-size: 16px; }
+}
+
+/* ============================================
+   Smooth Transitions (global)
+   ============================================ */
+
+* {
+  transition-property: background-color, border-color, color, opacity;
+  transition-duration: 0.15s;
+  transition-timing-function: ease-in-out;
+}
+
+/* Disable transitions for layout properties */
+*:not(.animate-slideIn):not(.animate-fadeIn) {
+  transition-property: background-color, border-color, color, opacity, box-shadow;
 }

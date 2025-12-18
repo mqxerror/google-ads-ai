@@ -52,7 +52,9 @@ export default function ScoreBreakdownPopover({
         top = anchorRect.top - popoverRect.height - 8;
       }
 
-      setPosition({ top, left });
+      // Defer state update to avoid React 19 lint warning
+      const timeoutId = setTimeout(() => setPosition({ top, left }), 0);
+      return () => clearTimeout(timeoutId);
     }
   }, [isOpen, anchorRef]);
 

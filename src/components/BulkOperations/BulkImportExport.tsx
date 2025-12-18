@@ -32,13 +32,19 @@ export default function BulkImportExport({ isOpen = true, onClose }: BulkImportE
   const [entityType, setEntityType] = useState<EntityType>('campaigns');
   const [includeMetrics, setIncludeMetrics] = useState(true);
 
+  // Import results type
+  interface ImportResults {
+    successCount: number;
+    errors: string[];
+  }
+
   // Import state
   const [file, setFile] = useState<File | null>(null);
   const [parsedData, setParsedData] = useState<CSVParseResult | null>(null);
   const [validation, setValidation] = useState<CSVValidationResult | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [importResults, setImportResults] = useState<any>(null);
+  const [importResults, setImportResults] = useState<ImportResults | null>(null);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];

@@ -238,7 +238,7 @@ export default function OpsCenter({ isOpen, onClose }: OpsCenterProps) {
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="font-semibold text-slate-900">
-                    Today's Action Plan
+                    Today&apos;s Action Plan
                   </h3>
                   <span className="text-xs text-slate-500">
                     ~{taskStats.totalEstimatedTimeMinutes} min total

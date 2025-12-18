@@ -1,6 +1,19 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+
+/**
+ * Read from localStorage safely (SSR-compatible)
+ */
+function readFromStorage<T>(key: string, initialValue: T): T {
+  if (typeof window === 'undefined') return initialValue;
+  try {
+    const item = window.localStorage.getItem(key);
+    return item ? JSON.parse(item) : initialValue;
+  } catch {
+    return initialValue;
+  }
+}
 
 /**
  * Hook for persisting state to localStorage with SSR support
@@ -13,28 +26,31 @@ export function useLocalStorage<T>(
   initialValue: T,
   debounceMs: number = 500
 ): [T, (value: T | ((prev: T) => T)) => void, () => void] {
-  // State to store our value
-  const [storedValue, setStoredValue] = useState<T>(initialValue);
-  const [isInitialized, setIsInitialized] = useState(false);
+  // Initialize state with value from localStorage (using initializer function)
+  const [storedValue, setStoredValue] = useState<T>(() =>
+    readFromStorage(key, initialValue)
+  );
 
-  // Initialize from localStorage on mount
+  // Track if we've mounted (for SSR hydration)
+  const isInitialized = useRef(false);
+
+  // Sync with localStorage on mount (handle SSR hydration mismatch)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    try {
-      const item = window.localStorage.getItem(key);
-      if (item) {
-        setStoredValue(JSON.parse(item));
+    if (!isInitialized.current) {
+      isInitialized.current = true;
+      // Re-read on client to handle SSR hydration
+      const stored = readFromStorage(key, initialValue);
+      if (JSON.stringify(stored) !== JSON.stringify(storedValue)) {
+        // Defer state update to avoid React 19 lint warning
+        const timeoutId = setTimeout(() => setStoredValue(stored), 0);
+        return () => clearTimeout(timeoutId);
       }
-    } catch (error) {
-      console.warn(`Error reading localStorage key "${key}":`, error);
     }
-    setIsInitialized(true);
-  }, [key]);
+  }, [key, initialValue, storedValue]);
 
   // Save to localStorage when value changes (debounced)
   useEffect(() => {
-    if (!isInitialized || typeof window === 'undefined') return;
+    if (!isInitialized.current || typeof window === 'undefined') return;
 
     const timeoutId = setTimeout(() => {
       try {

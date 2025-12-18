@@ -14,7 +14,8 @@ import { ApprovalsProvider } from '@/contexts/ApprovalsContext';
 import { UndoRedoProvider } from '@/contexts/UndoRedoContext';
 import { DashboardProvider } from '@/contexts/DashboardContext';
 import { ToastProvider } from '@/components/Toast/ToastProvider';
-import { ReactNode } from 'react';
+import FloatingActionQueue from '@/components/FloatingActionQueue';
+import { ReactNode, Suspense } from 'react';
 
 export default function Providers({ children }: { children: ReactNode }) {
   return (
@@ -30,9 +31,14 @@ export default function Providers({ children }: { children: ReactNode }) {
                       <GuardrailsProvider>
                         <ActionQueueProvider>
                           <DashboardProvider>
-                            <DrillDownProvider>
-                              <DetailPanelProvider>{children}</DetailPanelProvider>
-                            </DrillDownProvider>
+                            <Suspense fallback={null}>
+                              <DrillDownProvider>
+                                <DetailPanelProvider>
+                                  {children}
+                                  <FloatingActionQueue />
+                                </DetailPanelProvider>
+                              </DrillDownProvider>
+                            </Suspense>
                           </DashboardProvider>
                         </ActionQueueProvider>
                       </GuardrailsProvider>

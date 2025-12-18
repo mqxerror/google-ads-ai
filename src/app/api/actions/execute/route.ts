@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
   updateCampaignStatus,
@@ -10,6 +9,7 @@ import {
   updateAdGroupBid,
 } from '@/lib/google-ads';
 import { createAuditLog } from '@/lib/audit-log';
+import { verifyActionPermission } from '@/lib/auth-utils';
 
 // Action types we support
 type ActionType =
@@ -37,40 +37,40 @@ interface ActionPayload {
 
 export async function POST(request: NextRequest) {
   try {
-    // Get authenticated user session
-    const session = await auth();
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Parse the action payload
+    // Parse the action payload first to check permissions
     const action: ActionPayload = await request.json();
 
-    // Get user
+    // Verify user has permission for this action type
+    const authResult = await verifyActionPermission(action.actionType);
+    if (!authResult.authorized || !authResult.user) {
+      return authResult.errorResponse!;
+    }
+
+    // Get user with all related data in a single query (avoids N+1)
     const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
+      where: { email: authResult.user.email! },
+      include: {
+        authAccounts: {
+          where: { provider: 'google' },
+          select: { refresh_token: true },
+        },
+        googleAdsAccounts: {
+          select: {
+            id: true,
+            googleAccountId: true,
+            isManager: true,
+            parentManagerId: true,
+          },
+        },
+      },
     });
 
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Get OAuth account with refresh token
-    const authAccount = await prisma.account.findFirst({
-      where: { userId: user.id, provider: 'google' },
-      select: { refresh_token: true },
-    });
-
-    // Get Google Ads accounts
-    const googleAdsAccounts = await prisma.googleAdsAccount.findMany({
-      where: { userId: user.id },
-      select: {
-        id: true,
-        googleAccountId: true,
-        isManager: true,
-        parentManagerId: true,
-      },
-    });
+    const authAccount = user.authAccounts[0];
+    const googleAdsAccounts = user.googleAdsAccounts;
 
     if (!authAccount?.refresh_token) {
       return NextResponse.json(

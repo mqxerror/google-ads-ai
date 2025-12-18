@@ -48,6 +48,17 @@ export interface MetricChange {
   isGood?: boolean; // Whether direction is favorable
 }
 
+// Search query evidence for wasted spend analysis
+export interface SearchQueryEvidence {
+  query: string;
+  clicks: number;
+  spend: number;
+  conversions: number;
+  ctr?: number;
+  matchType?: 'broad' | 'phrase' | 'exact';
+  recommendation: 'add_negative' | 'review' | 'keep';
+}
+
 // Evidence supporting the diagnosis
 export interface DiagnosticEvidence {
   metrics: MetricChange[];
@@ -56,6 +67,7 @@ export interface DiagnosticEvidence {
   dataPoints?: number; // Days of data analyzed
   anomalyDetected?: boolean;
   relatedChanges?: string[]; // Recent changes that might have caused this
+  searchQueries?: SearchQueryEvidence[]; // Top search queries causing issues
 }
 
 // Recommended fix with impact estimation

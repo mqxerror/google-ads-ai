@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
+import { DEMO_ACCOUNT } from '@/lib/demo-data';
 
 // GET /api/accounts - List all connected Google Ads accounts
 export async function GET() {
@@ -8,6 +9,11 @@ export async function GET() {
 
   if (!session?.user?.email) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Demo mode - return mock account
+  if (isDemoMode) {
+    return NextResponse.json({ accounts: [DEMO_ACCOUNT] });
   }
 
   const user = await prisma.user.findUnique({

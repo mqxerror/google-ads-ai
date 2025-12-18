@@ -13,21 +13,23 @@ const GuardrailsContext = createContext<GuardrailsContextType | undefined>(undef
 
 const STORAGE_KEY = 'guardrails-settings';
 
-export function GuardrailsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<GuardrailSettings>(defaultGuardrailSettings);
-
-  // Load settings from localStorage on mount
-  useEffect(() => {
+// Initialize settings from localStorage (SSR-safe)
+function getInitialSettings(): GuardrailSettings {
+  if (typeof window === 'undefined') return defaultGuardrailSettings;
+  try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        setSettings({ ...defaultGuardrailSettings, ...parsed });
-      } catch {
-        // Invalid stored data, use defaults
-      }
+      const parsed = JSON.parse(stored);
+      return { ...defaultGuardrailSettings, ...parsed };
     }
-  }, []);
+  } catch {
+    // Invalid stored data, use defaults
+  }
+  return defaultGuardrailSettings;
+}
+
+export function GuardrailsProvider({ children }: { children: ReactNode }) {
+  const [settings, setSettings] = useState<GuardrailSettings>(getInitialSettings);
 
   // Save settings to localStorage when they change
   useEffect(() => {

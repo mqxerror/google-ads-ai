@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { fetchCampaigns, createCampaign, updateCampaign } from '@/lib/google-ads';
+import { getOrSet, createCacheKey, invalidateAccountCache, CACHE_TTL } from '@/lib/cache';
+import { DEMO_CAMPAIGNS } from '@/lib/demo-data';
 
 // GET /api/google-ads/campaigns?accountId=xxx - Fetch campaigns for an account
 export async function GET(request: NextRequest) {
@@ -9,6 +11,11 @@ export async function GET(request: NextRequest) {
 
   if (!session?.user?.email) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Demo mode - return mock data
+  if (isDemoMode) {
+    return NextResponse.json({ campaigns: DEMO_CAMPAIGNS });
   }
 
   const { searchParams } = new URL(request.url);
@@ -67,12 +74,24 @@ export async function GET(request: NextRequest) {
     }
 
     // For MCC client accounts, we need to pass the loginCustomerId (parent manager ID)
-    const campaigns = await fetchCampaigns(
-      googleOAuthAccount.refresh_token,
+    // Use caching to reduce API calls - cache for 5 minutes
+    const cacheKey = createCacheKey(
+      'campaigns',
       googleAdsAccount.googleAccountId,
-      googleAdsAccount.parentManagerId || undefined,
-      startDate,
-      endDate
+      startDate || 'default',
+      endDate || 'default'
+    );
+
+    const campaigns = await getOrSet(
+      cacheKey,
+      () => fetchCampaigns(
+        googleOAuthAccount.refresh_token!, // Already validated above
+        googleAdsAccount.googleAccountId,
+        googleAdsAccount.parentManagerId || undefined,
+        startDate,
+        endDate
+      ),
+      CACHE_TTL.MEDIUM // 5 minute cache
     );
 
     // Update last sync time
@@ -97,6 +116,15 @@ export async function POST(request: NextRequest) {
 
   if (!session?.user?.email) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Demo mode - return success with fake campaign ID
+  if (isDemoMode) {
+    return NextResponse.json({
+      success: true,
+      campaignId: `demo-camp-${Date.now()}`,
+      message: 'Demo mode: Campaign creation simulated',
+    });
   }
 
   try {
@@ -166,6 +194,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
 
+    // Invalidate cache after creating a campaign
+    invalidateAccountCache(googleAdsAccount.googleAccountId);
+
     return NextResponse.json({ success: true, campaignId: result.campaignId });
   } catch (error) {
     console.error('Error creating campaign:', error);
@@ -182,6 +213,14 @@ export async function PATCH(request: NextRequest) {
 
   if (!session?.user?.email) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Demo mode - return success
+  if (isDemoMode) {
+    return NextResponse.json({
+      success: true,
+      message: 'Demo mode: Campaign update simulated',
+    });
   }
 
   try {
@@ -244,6 +283,9 @@ export async function PATCH(request: NextRequest) {
     if (!result.success) {
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
+
+    // Invalidate cache after updating a campaign
+    invalidateAccountCache(googleAdsAccount.googleAccountId);
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -69,13 +69,16 @@ export default function CampaignDistributionWidget() {
 
   const totalCampaigns = campaigns.length;
 
-  // Calculate pie chart segments
-  let cumulativePercentage = 0;
-  const segments = distribution.map(d => {
-    const start = cumulativePercentage;
-    cumulativePercentage += d.percentage;
-    return { ...d, start, end: cumulativePercentage };
-  });
+  // Calculate pie chart segments using reduce (avoids variable reassignment)
+  const segments = distribution.reduce<Array<typeof distribution[0] & { start: number; end: number }>>(
+    (acc, d) => {
+      const start = acc.length > 0 ? acc[acc.length - 1].end : 0;
+      const end = start + d.percentage;
+      acc.push({ ...d, start, end });
+      return acc;
+    },
+    []
+  );
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">

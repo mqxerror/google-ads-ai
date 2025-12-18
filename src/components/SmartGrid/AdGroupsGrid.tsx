@@ -6,6 +6,7 @@ import { useAccount } from '@/contexts/AccountContext';
 import { useDrillDown } from '@/contexts/DrillDownContext';
 import { useDetailPanel } from '@/contexts/DetailPanelContext';
 import GridSkeleton from './GridSkeleton';
+import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import { AdEditor } from '@/components/AdEditor';
 
 function StatusBadge({ status }: { status: string }) {
@@ -65,7 +66,10 @@ export default function AdGroupsGrid() {
     fetchAdGroups();
   }, [currentAccount?.id, selectedCampaign?.id]);
 
-  if (isLoading) {
+  // Determine if this is initial load (no cached data)
+  const isInitialLoad = isLoading && adGroups.length === 0;
+
+  if (isInitialLoad) {
     return <GridSkeleton />;
   }
 
@@ -96,7 +100,11 @@ export default function AdGroupsGrid() {
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="relative overflow-x-auto">
+      {/* Loading overlay for refetch - shows over existing data */}
+      {isLoading && adGroups.length > 0 && (
+        <LoadingOverlay message="Refreshing ad groups..." opacity={70} />
+      )}
       <table className="w-full min-w-[800px]">
         <thead className="bg-gray-50">
           <tr>

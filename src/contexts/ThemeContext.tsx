@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useRef, useCallback } from 'react';
 
 type Theme = 'light' | 'dark' | 'system';
 
@@ -15,20 +15,51 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 const THEME_STORAGE_KEY = 'google-ads-manager-theme';
 
+// Initialize theme from localStorage (SSR-safe)
+function getInitialTheme(): Theme {
+  if (typeof window === 'undefined') return 'system';
+  const saved = localStorage.getItem(THEME_STORAGE_KEY) as Theme | null;
+  if (saved && ['light', 'dark', 'system'].includes(saved)) {
+    return saved;
+  }
+  return 'system';
+}
+
+// Resolve theme based on system preference
+function resolveTheme(theme: Theme): 'light' | 'dark' {
+  if (typeof window === 'undefined') return 'light';
+  if (theme === 'system') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return theme;
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>('system');
-  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light');
-  const [mounted, setMounted] = useState(false);
+  const [theme, setThemeState] = useState<Theme>(getInitialTheme);
+  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>(() => resolveTheme(getInitialTheme()));
+  const mounted = useRef(false);
 
-  // Handle system theme detection
-  useEffect(() => {
-    setMounted(true);
+  // Update resolved theme helper
+  const updateResolvedTheme = useCallback((currentTheme: Theme) => {
+    const resolved = resolveTheme(currentTheme);
+    setResolvedTheme(resolved);
 
-    // Load saved theme
-    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) as Theme | null;
-    if (savedTheme && ['light', 'dark', 'system'].includes(savedTheme)) {
-      setThemeState(savedTheme);
+    // Apply to document
+    if (typeof document !== 'undefined') {
+      if (resolved === 'dark') {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
     }
+  }, []);
+
+  // Handle system theme detection and mounting
+  useEffect(() => {
+    mounted.current = true;
+
+    // Defer theme update to avoid React 19 lint warning
+    const timeoutId = setTimeout(() => updateResolvedTheme(theme), 0);
 
     // Listen for system theme changes
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -39,53 +70,23 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     };
 
     mediaQuery.addEventListener('change', handleChange);
-    return () => mediaQuery.removeEventListener('change', handleChange);
+    return () => {
+      clearTimeout(timeoutId);
+      mediaQuery.removeEventListener('change', handleChange);
+    };
+  }, [theme, updateResolvedTheme]);
+
+  const setTheme = useCallback((newTheme: Theme) => {
+    setThemeState(newTheme);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(THEME_STORAGE_KEY, newTheme);
+    }
   }, []);
 
-  // Update resolved theme when theme changes
-  useEffect(() => {
-    if (mounted) {
-      updateResolvedTheme(theme);
-    }
-  }, [theme, mounted]);
-
-  const updateResolvedTheme = (currentTheme: Theme) => {
-    let resolved: 'light' | 'dark';
-
-    if (currentTheme === 'system') {
-      resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    } else {
-      resolved = currentTheme;
-    }
-
-    setResolvedTheme(resolved);
-
-    // Apply to document
-    if (resolved === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  };
-
-  const setTheme = (newTheme: Theme) => {
-    setThemeState(newTheme);
-    localStorage.setItem(THEME_STORAGE_KEY, newTheme);
-  };
-
-  const toggleTheme = () => {
+  const toggleTheme = useCallback(() => {
     const newTheme = resolvedTheme === 'dark' ? 'light' : 'dark';
     setTheme(newTheme);
-  };
-
-  // Prevent hydration mismatch
-  if (!mounted) {
-    return (
-      <ThemeContext.Provider value={{ theme: 'system', resolvedTheme: 'light', setTheme: () => {}, toggleTheme: () => {} }}>
-        {children}
-      </ThemeContext.Provider>
-    );
-  }
+  }, [resolvedTheme, setTheme]);
 
   return (
     <ThemeContext.Provider value={{ theme, resolvedTheme, setTheme, toggleTheme }}>

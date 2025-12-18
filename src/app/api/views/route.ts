@@ -1,6 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { auth, isDemoMode } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+
+// Demo saved views
+const DEMO_VIEWS = [
+  {
+    id: 'demo-view-1',
+    name: 'High Performers',
+    entityType: 'campaign',
+    filters: { aiScoreMin: 75 },
+    sorting: { column: 'conversions', direction: 'desc' },
+    columns: [],
+    isDefault: false,
+  },
+  {
+    id: 'demo-view-2',
+    name: 'Needs Attention',
+    entityType: 'campaign',
+    filters: { aiScoreMax: 50 },
+    sorting: { column: 'aiScore', direction: 'asc' },
+    columns: [],
+    isDefault: false,
+  },
+];
 
 // GET - Fetch all saved views for user/account
 export async function GET(request: NextRequest) {
@@ -8,6 +30,11 @@ export async function GET(request: NextRequest) {
     const session = await auth();
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Demo mode - return mock views
+    if (isDemoMode) {
+      return NextResponse.json({ views: DEMO_VIEWS });
     }
 
     const user = await prisma.user.findUnique({

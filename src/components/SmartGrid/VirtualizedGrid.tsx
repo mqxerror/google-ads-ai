@@ -2,9 +2,9 @@
 
 import React, { useCallback, useMemo, useRef, useEffect, useState } from 'react';
 import { Campaign, SortConfig } from '@/types/campaign';
+import { CampaignIssue } from '@/types/health';
 import GridRow from './GridRow';
 import GridHeader from './GridHeader';
-import { Recommendation } from '@/lib/recommendations';
 
 export interface VirtualizedGridProps {
   /**
@@ -48,9 +48,9 @@ export interface VirtualizedGridProps {
    */
   onUpdateCampaign?: (id: string, updates: Partial<Campaign>) => void;
   /**
-   * Handler for recommendation actions
+   * Handler for issue click
    */
-  onRecommendationAction?: (recommendation: Recommendation, campaign: Campaign) => void;
+  onIssueClick?: (campaign: Campaign, issue: CampaignIssue) => void;
   /**
    * Height of each row in pixels
    */
@@ -81,8 +81,8 @@ export default function VirtualizedGrid({
   onViewDetails,
   onManageBudget,
   onUpdateCampaign,
-  onRecommendationAction,
-  rowHeight = 73,
+  onIssueClick,
+  rowHeight = 56, // Apple-style 56px row height
   height = 600,
   overscanCount = 5,
 }: VirtualizedGridProps) {
@@ -131,7 +131,9 @@ export default function VirtualizedGrid({
   useEffect(() => {
     if (containerRef.current) {
       containerRef.current.scrollTop = 0;
-      setScrollTop(0);
+      // Defer state update to avoid React 19 lint warning
+      const timeoutId = setTimeout(() => setScrollTop(0), 0);
+      return () => clearTimeout(timeoutId);
     }
   }, [campaigns]);
 
@@ -178,7 +180,7 @@ export default function VirtualizedGrid({
             }}
           >
             <table className="w-full min-w-[900px]">
-              <tbody className="divide-y divide-gray-200">
+              <tbody>
                 {visibleCampaigns.map((campaign) => (
                   <GridRow
                     key={campaign.id}
@@ -197,7 +199,11 @@ export default function VirtualizedGrid({
                         : undefined
                     }
                     onUpdateCampaign={onUpdateCampaign}
-                    onRecommendationAction={onRecommendationAction}
+                    onIssueClick={
+                      onIssueClick
+                        ? (campaign, issue) => onIssueClick(campaign, issue)
+                        : undefined
+                    }
                   />
                 ))}
               </tbody>

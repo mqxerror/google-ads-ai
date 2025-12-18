@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { fetchAdGroups } from '@/lib/google-ads';
+import { DEMO_AD_GROUPS } from '@/lib/demo-data';
 
 // GET /api/google-ads/ad-groups?accountId=xxx&campaignId=xxx - Fetch ad groups for a campaign
 export async function GET(request: NextRequest) {
@@ -21,6 +22,12 @@ export async function GET(request: NextRequest) {
 
   if (!campaignId) {
     return NextResponse.json({ error: 'campaignId is required' }, { status: 400 });
+  }
+
+  // Demo mode - return mock ad groups for the campaign
+  if (isDemoMode) {
+    const adGroups = DEMO_AD_GROUPS.filter(ag => ag.campaignId === campaignId);
+    return NextResponse.json({ adGroups });
   }
 
   try {

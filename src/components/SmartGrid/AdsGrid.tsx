@@ -5,6 +5,7 @@ import { useAccount } from '@/contexts/AccountContext';
 import { useDrillDown } from '@/contexts/DrillDownContext';
 import { useDetailPanel } from '@/contexts/DetailPanelContext';
 import GridSkeleton from './GridSkeleton';
+import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import { AdEditor } from '@/components/AdEditor';
 
 interface Ad {
@@ -99,7 +100,10 @@ export default function AdsGrid() {
     loadAds();
   }, [loadAds]);
 
-  if (isLoading) {
+  // Determine if this is initial load (no cached data)
+  const isInitialLoad = isLoading && ads.length === 0;
+
+  if (isInitialLoad) {
     return <GridSkeleton />;
   }
 
@@ -143,7 +147,11 @@ export default function AdsGrid() {
   }
 
   return (
-    <>
+    <div className="relative">
+      {/* Loading overlay for refetch - shows over existing data */}
+      {isLoading && ads.length > 0 && (
+        <LoadingOverlay message="Refreshing ads..." opacity={70} />
+      )}
       {/* Header with Create Ad button */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50">
         <div className="text-sm text-gray-600">
@@ -264,6 +272,6 @@ export default function AdsGrid() {
         }}
         adGroupId={selectedAdGroup?.id}
       />
-    </>
+    </div>
   );
 }

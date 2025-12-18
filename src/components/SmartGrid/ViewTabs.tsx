@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { FilterConfig, SortConfig, SavedView } from '@/types/campaign';
+import { FilterConfig, SortConfig, SavedView, CampaignStatus } from '@/types/campaign';
 import { useAccount } from '@/contexts/AccountContext';
 
 interface ViewTabsProps {
@@ -9,6 +9,13 @@ interface ViewTabsProps {
   onViewChange: (viewId: string, filters?: FilterConfig, sorting?: SortConfig) => void;
   currentFilters: FilterConfig;
   currentSorting: SortConfig;
+  campaigns?: Array<{
+    status: CampaignStatus;
+    spend: number;
+    conversions: number;
+    clicks: number;
+    aiScore: number;
+  }>;
 }
 
 interface SavedViewData {
@@ -69,8 +76,34 @@ const aiViews: AIView[] = [
   },
 ];
 
-export default function ViewTabs({ activeView, onViewChange, currentFilters, currentSorting }: ViewTabsProps) {
+export default function ViewTabs({ activeView, onViewChange, currentFilters, currentSorting, campaigns = [] }: ViewTabsProps) {
   const { currentAccount } = useAccount();
+
+  // Calculate count for each AI view based on filter criteria
+  const getAIViewCount = (view: AIView): number => {
+    if (!campaigns || campaigns.length === 0) return 0;
+
+    return campaigns.filter(c => {
+      const filters = view.filters;
+
+      // Status filter
+      if (filters.status && !filters.status.includes(c.status)) return false;
+
+      // Spend minimum
+      if (filters.spendMin !== undefined && c.spend < filters.spendMin) return false;
+
+      // Conversions max (0 = no conversions)
+      if (filters.conversionsMax !== undefined && c.conversions > filters.conversionsMax) return false;
+
+      // Clicks minimum
+      if (filters.clicksMin !== undefined && c.clicks < filters.clicksMin) return false;
+
+      // AI Score minimum
+      if (filters.aiScoreMin !== undefined && c.aiScore < filters.aiScoreMin) return false;
+
+      return true;
+    }).length;
+  };
   const [savedViews, setSavedViews] = useState<SavedViewData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -275,7 +308,9 @@ export default function ViewTabs({ activeView, onViewChange, currentFilters, cur
       <div className="mx-1 h-5 w-px bg-gray-300" />
 
       {/* AI Views */}
-      {aiViews.map((view) => (
+      {aiViews.map((view) => {
+        const count = getAIViewCount(view);
+        return (
         <div key={view.id} className="relative">
           <button
             onClick={() => handleViewClick(view)}
@@ -291,6 +326,15 @@ export default function ViewTabs({ activeView, onViewChange, currentFilters, cur
               {getAIViewIcon(view.icon)}
             </span>
             {view.name}
+            {count > 0 && (
+              <span className={`ml-1 px-1.5 py-0.5 text-xs rounded-full font-semibold ${
+                view.icon === 'waste' || view.icon === 'tracking'
+                  ? 'bg-red-100 text-red-700'
+                  : 'bg-emerald-100 text-emerald-700'
+              }`}>
+                {count}
+              </span>
+            )}
           </button>
           {/* Tooltip */}
           {hoveredAIView === view.id && (
@@ -300,7 +344,8 @@ export default function ViewTabs({ activeView, onViewChange, currentFilters, cur
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
 
       {/* Separator */}
       {savedViews.length > 0 && (

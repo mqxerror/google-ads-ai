@@ -1,7 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { fetchAds, createAd, updateAd } from '@/lib/google-ads';
+
+// Demo ads data
+const DEMO_ADS = [
+  {
+    id: 'demo-ad-1',
+    adGroupId: 'demo-ag-1',
+    type: 'RESPONSIVE_SEARCH_AD',
+    status: 'ENABLED',
+    headlines: ['Best Project Software', 'Try Free Today', 'Trusted by 10K+ Teams'],
+    descriptions: ['Streamline your workflow with our powerful tools.', 'Start your free trial now.'],
+    finalUrls: ['https://example.com'],
+    clicks: 320,
+    impressions: 12500,
+    ctr: 2.56,
+    conversions: 28,
+    spend: 550.00,
+  },
+  {
+    id: 'demo-ad-2',
+    adGroupId: 'demo-ag-1',
+    type: 'RESPONSIVE_SEARCH_AD',
+    status: 'ENABLED',
+    headlines: ['#1 Team Collaboration', 'Free 14-Day Trial', 'No Credit Card Needed'],
+    descriptions: ['Join thousands of happy customers.', 'Easy setup in minutes.'],
+    finalUrls: ['https://example.com/trial'],
+    clicks: 295,
+    impressions: 11200,
+    ctr: 2.63,
+    conversions: 24,
+    spend: 490.00,
+  },
+  {
+    id: 'demo-ad-3',
+    adGroupId: 'demo-ag-3',
+    type: 'RESPONSIVE_SEARCH_AD',
+    status: 'PAUSED',
+    headlines: ['Manage Projects Easily', 'Boost Productivity', 'See Results Fast'],
+    descriptions: ['The all-in-one solution for modern teams.', 'Get started in seconds.'],
+    finalUrls: ['https://example.com/features'],
+    clicks: 180,
+    impressions: 8500,
+    ctr: 2.12,
+    conversions: 12,
+    spend: 320.00,
+  },
+];
 
 // GET /api/google-ads/ads?accountId=xxx&adGroupId=xxx - Fetch ads for an ad group
 export async function GET(request: NextRequest) {
@@ -21,6 +67,12 @@ export async function GET(request: NextRequest) {
 
   if (!adGroupId) {
     return NextResponse.json({ error: 'adGroupId is required' }, { status: 400 });
+  }
+
+  // Demo mode - return mock ads for the ad group
+  if (isDemoMode) {
+    const ads = DEMO_ADS.filter(ad => ad.adGroupId === adGroupId);
+    return NextResponse.json({ ads });
   }
 
   try {
@@ -82,6 +134,15 @@ export async function POST(request: NextRequest) {
 
   if (!session?.user?.email) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Demo mode - return success with fake ad ID
+  if (isDemoMode) {
+    return NextResponse.json({
+      success: true,
+      adId: `demo-ad-${Date.now()}`,
+      message: 'Demo mode: Ad creation simulated',
+    });
   }
 
   try {
@@ -163,6 +224,14 @@ export async function PATCH(request: NextRequest) {
 
   if (!session?.user?.email) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Demo mode - return success
+  if (isDemoMode) {
+    return NextResponse.json({
+      success: true,
+      message: 'Demo mode: Ad update simulated',
+    });
   }
 
   try {

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { listAccessibleAccounts, listClientAccounts } from '@/lib/google-ads';
+import { DEMO_ACCOUNT } from '@/lib/demo-data';
 
 // GET /api/google-ads/accounts - List accessible Google Ads accounts and sync to database
 export async function GET() {
@@ -9,6 +10,19 @@ export async function GET() {
 
   if (!session?.user?.email) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Demo mode - return mock account
+  if (isDemoMode) {
+    return NextResponse.json({
+      accounts: [DEMO_ACCOUNT],
+      synced: 1,
+      summary: {
+        totalAccounts: 1,
+        managerAccounts: 0,
+        clientAccounts: 1,
+      },
+    });
   }
 
   try {

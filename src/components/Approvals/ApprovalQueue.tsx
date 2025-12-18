@@ -64,7 +64,7 @@ export default function ApprovalQueue({ isOpen = true, onClose }: ApprovalQueueP
     }
   };
 
-  const handleCreateRequest = async (request: any) => {
+  const handleCreateRequest = async (request: Parameters<typeof createApprovalRequest>[0]) => {
     await createApprovalRequest(request);
   };
 

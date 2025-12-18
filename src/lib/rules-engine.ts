@@ -95,7 +95,7 @@ export function evaluateRule(
     }
 
     if (rule.entityFilter.statusIn) {
-      if (!rule.entityFilter.statusIn.includes(entity.status as any)) {
+      if (!rule.entityFilter.statusIn.includes(entity.status as typeof rule.entityFilter.statusIn[number])) {
         return false;
       }
     }

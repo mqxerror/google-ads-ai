@@ -1,4 +1,5 @@
 export type ActionType =
+  // Core entity actions
   | 'pause_campaign'
   | 'enable_campaign'
   | 'pause_ad_group'
@@ -6,7 +7,16 @@ export type ActionType =
   | 'pause_keyword'
   | 'enable_keyword'
   | 'update_budget'
-  | 'update_bid';
+  | 'update_bid'
+  // AI recommendation actions
+  | 'adjust_budget'
+  | 'adjust_bid'
+  | 'add_negatives'
+  | 'improve_ads'
+  | 'review_targeting'
+  | 'fix_tracking'
+  | 'review_keywords'
+  | 'scale_budget';
 
 export type RiskLevel = 'low' | 'medium' | 'high';
 
@@ -48,6 +58,14 @@ export function getActionLabel(actionType: ActionType): string {
     enable_keyword: 'Enable Keyword',
     update_budget: 'Update Budget',
     update_bid: 'Update Bid',
+    adjust_budget: 'Adjust Budget',
+    adjust_bid: 'Adjust Bid',
+    add_negatives: 'Add Negative Keywords',
+    improve_ads: 'Improve Ads',
+    review_targeting: 'Review Targeting',
+    fix_tracking: 'Fix Tracking',
+    review_keywords: 'Review Keywords',
+    scale_budget: 'Scale Budget',
   };
   return labels[actionType];
 }
@@ -76,7 +94,7 @@ export function calculateRiskLevel(
   }
 
   // Budget changes > 50% are high risk
-  if (actionType === 'update_budget') {
+  if (actionType === 'update_budget' || actionType === 'adjust_budget') {
     const current = Number(currentValue);
     const next = Number(newValue);
     if (current > 0) {
@@ -84,6 +102,32 @@ export function calculateRiskLevel(
       if (changePercent > 50) return 'high';
       if (changePercent > 25) return 'medium';
     }
+    return 'medium'; // Budget adjustments are at least medium risk
+  }
+
+  // Bid changes - similar to budget
+  if (actionType === 'update_bid' || actionType === 'adjust_bid') {
+    return 'medium';
+  }
+
+  // Adding negatives is generally low risk
+  if (actionType === 'add_negatives') {
+    return 'low';
+  }
+
+  // Scaling budget is medium-high risk
+  if (actionType === 'scale_budget') {
+    return 'medium';
+  }
+
+  // Review actions are low risk (just investigation)
+  if (actionType === 'review_targeting' || actionType === 'review_keywords') {
+    return 'low';
+  }
+
+  // Improving ads or fixing tracking is medium risk
+  if (actionType === 'improve_ads' || actionType === 'fix_tracking') {
+    return 'medium';
   }
 
   // Enabling campaigns is usually low risk

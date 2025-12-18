@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { fetchKeywords, createKeywords, removeKeyword, updateKeyword } from '@/lib/google-ads';
+import { DEMO_KEYWORDS } from '@/lib/demo-data';
 
 // GET /api/google-ads/keywords?accountId=xxx&adGroupId=xxx - Fetch keywords for an ad group
 export async function GET(request: NextRequest) {
@@ -21,6 +22,12 @@ export async function GET(request: NextRequest) {
 
   if (!adGroupId) {
     return NextResponse.json({ error: 'adGroupId is required' }, { status: 400 });
+  }
+
+  // Demo mode - return mock keywords for the ad group
+  if (isDemoMode) {
+    const keywords = DEMO_KEYWORDS.filter(kw => kw.adGroupId === adGroupId);
+    return NextResponse.json({ keywords });
   }
 
   try {

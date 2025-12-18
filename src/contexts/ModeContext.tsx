@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, ReactNode, useCallback } from 'react';
 
 export type UIMode = 'simple' | 'pro';
 
@@ -14,16 +14,18 @@ interface ModeContextType {
 
 const ModeContext = createContext<ModeContextType | undefined>(undefined);
 
-export function ModeProvider({ children }: { children: ReactNode }) {
-  const [mode, setModeState] = useState<UIMode>('simple');
+// Initialize mode from localStorage (SSR-safe)
+function getInitialMode(): UIMode {
+  if (typeof window === 'undefined') return 'simple';
+  const saved = localStorage.getItem('uiMode') as UIMode;
+  if (saved === 'simple' || saved === 'pro') {
+    return saved;
+  }
+  return 'simple';
+}
 
-  useEffect(() => {
-    // Load saved preference from localStorage on client side
-    const saved = localStorage.getItem('uiMode') as UIMode;
-    if (saved === 'simple' || saved === 'pro') {
-      setModeState(saved);
-    }
-  }, []);
+export function ModeProvider({ children }: { children: ReactNode }) {
+  const [mode, setModeState] = useState<UIMode>(getInitialMode);
 
   const setMode = (newMode: UIMode) => {
     setModeState(newMode);

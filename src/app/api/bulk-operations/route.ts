@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
   updateCampaignStatus,
@@ -8,6 +7,7 @@ import {
   updateKeywordStatus,
 } from '@/lib/google-ads';
 import { createAuditLog } from '@/lib/audit-log';
+import { verifyPermission } from '@/lib/auth-utils';
 
 interface BulkOperation {
   entityType: 'campaign' | 'ad_group' | 'keyword';
@@ -28,13 +28,14 @@ interface BulkOperationResult {
 // POST /api/bulk-operations - Execute multiple operations at once
 export async function POST(request: NextRequest) {
   try {
-    const session = await auth();
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Verify user has edit permission for bulk operations
+    const authResult = await verifyPermission('edit');
+    if (!authResult.authorized || !authResult.user) {
+      return authResult.errorResponse!;
     }
 
     const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
+      where: { email: authResult.user.email! },
       include: {
         authAccounts: {
           where: { provider: 'google' },
