@@ -103,6 +103,28 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ campaigns });
   } catch (error) {
     console.error('Error fetching campaigns:', error);
+
+    // Check if it's a rate limit error from Google Ads API
+    const errorStr = String(error);
+    const retryMatch = errorStr.match(/Retry in (\d+) seconds/);
+
+    if (retryMatch) {
+      const retrySeconds = parseInt(retryMatch[1], 10);
+      const retryMinutes = Math.ceil(retrySeconds / 60);
+      const retryTime = retryMinutes > 60
+        ? `${Math.ceil(retryMinutes / 60)} hours`
+        : `${retryMinutes} minutes`;
+
+      return NextResponse.json(
+        {
+          error: `API rate limited. Please wait ~${retryTime} before refreshing.`,
+          isRateLimited: true,
+          retryAfterSeconds: retrySeconds,
+        },
+        { status: 429 }
+      );
+    }
+
     return NextResponse.json(
       { error: 'Failed to fetch campaigns', details: String(error) },
       { status: 500 }

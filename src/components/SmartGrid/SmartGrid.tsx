@@ -31,6 +31,7 @@ import { CampaignIssue } from '@/types/health';
 import DateRangePicker, { DateRange, getDefaultDateRange } from '@/components/DateRangePicker';
 import { CampaignEditor } from '@/components/CampaignEditor';
 import { BudgetManager } from '@/components/BudgetManager';
+import { BudgetReallocationModal } from '@/components/BudgetOptimizer';
 
 // Type for pending action before guardrail check - reuse the exported type from guardrails
 type PendingActionData = ActionWithAIScore;
@@ -91,6 +92,7 @@ export default function SmartGrid() {
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [isBudgetManagerOpen, setIsBudgetManagerOpen] = useState(false);
   const [budgetCampaign, setBudgetCampaign] = useState<Campaign | null>(null);
+  const [isBudgetReallocationOpen, setIsBudgetReallocationOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isAIDockOpen, setIsAIDockOpen] = useState(false);
   const [dockCampaign, setDockCampaign] = useState<Campaign | null>(null);
@@ -225,6 +227,10 @@ export default function SmartGrid() {
 
         if (!response.ok) {
           const data = await response.json();
+          // Handle rate limit with helpful message
+          if (response.status === 429 || data.isRateLimited) {
+            throw new Error(data.error || 'API rate limited. Please try again later.');
+          }
           throw new Error(data.error || 'Failed to fetch campaigns');
         }
 
@@ -791,18 +797,30 @@ export default function SmartGrid() {
             </button>
           )}
           {currentLevel === 'campaigns' && campaigns.length > 0 && (
-            <button
-              onClick={() => {
-                setDockCampaign(null);
-                setIsAIDockOpen(true);
-              }}
-              className="btn-primary h-8 px-3 text-[13px]"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-              </svg>
-              AI
-            </button>
+            <>
+              <button
+                onClick={() => setIsBudgetReallocationOpen(true)}
+                className="btn-secondary h-8 px-3 text-[13px]"
+                title="Budget Reallocation"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Optimize
+              </button>
+              <button
+                onClick={() => {
+                  setDockCampaign(null);
+                  setIsAIDockOpen(true);
+                }}
+                className="btn-primary h-8 px-3 text-[13px]"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+                AI
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -946,6 +964,13 @@ export default function SmartGrid() {
           setBudgetCampaign(null);
         }}
         campaign={budgetCampaign}
+      />
+
+      {/* Budget Reallocation Modal */}
+      <BudgetReallocationModal
+        isOpen={isBudgetReallocationOpen}
+        onClose={() => setIsBudgetReallocationOpen(false)}
+        campaigns={campaigns}
       />
 
       {/* AI Dock - unified AI interface */}

@@ -39,7 +39,15 @@ export interface QueuedAction {
   adGroupId?: string; // For keywords, the parent ad group ID
   createdAt: Date;
   executedAt?: Date;
+  scheduledAt?: Date; // For scheduled actions
   error?: string;
+  metadata?: {
+    applyMode?: 'direct' | 'draft' | 'scheduled' | 'experiment';
+    enableRollback?: boolean;
+    experimentName?: string;
+    experimentBudgetPercent?: number;
+    experimentDuration?: number;
+  };
 }
 
 export interface ActionQueueState {

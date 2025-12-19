@@ -4,6 +4,8 @@ import { useState, useMemo } from 'react';
 import { Campaign } from '@/types/campaign';
 import { CampaignIssue, RecommendedFix, ConfidenceLevel } from '@/types/health';
 import { useActionQueue } from '@/contexts/ActionQueueContext';
+import { DiffView, SafeApplyModal, ApplyMode } from '@/components/OpsCenter';
+import type { DiffItem } from '@/components/OpsCenter';
 
 interface FixPanelProps {
   isOpen: boolean;
@@ -52,6 +54,8 @@ export default function FixPanel({
   const [isApplying, setIsApplying] = useState(false);
   const [enableRollback, setEnableRollback] = useState(true);
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>(() => generateMockEvidence(issue));
+  const [showApplyModal, setShowApplyModal] = useState(false);
+  const [showDiffView, setShowDiffView] = useState(false);
 
   const fixes = useMemo(() => issue.fixes || [], [issue.fixes]);
   const activeFix = selectedFix || fixes[0];
@@ -62,6 +66,57 @@ export default function FixPanel({
   const totalCost = evidenceItems.filter(e => e.included).reduce((sum, e) => sum + e.cost, 0);
   const estimatedSavingsLow = Math.round(totalCost * 0.7);
   const estimatedSavingsHigh = Math.round(totalCost * 1.1);
+
+  // Generate diff items for the DiffView
+  const diffItems: DiffItem[] = useMemo(() => {
+    const items: DiffItem[] = [];
+
+    // Add negatives being added
+    if (issue.category === 'wasted_spend') {
+      items.push({
+        field: 'negative_keywords',
+        label: 'Negative Keywords',
+        currentValue: 0,
+        newValue: includedCount,
+        type: 'modify',
+      });
+
+      // Add individual keywords as additions
+      evidenceItems.filter(e => e.included).forEach((item) => {
+        items.push({
+          field: `neg_${item.id}`,
+          label: `"${item.query}" (${item.matchType})`,
+          currentValue: null,
+          newValue: `Block (${item.matchType})`,
+          type: 'add',
+        });
+      });
+    }
+
+    // Add budget changes if applicable
+    if (activeFix?.actionType === 'adjust_budget' || activeFix?.actionType === 'scale_budget') {
+      items.push({
+        field: 'daily_budget',
+        label: 'Daily Budget',
+        currentValue: `$${campaign.budget?.toFixed(2) || '0.00'}`,
+        newValue: activeFix.action,
+        type: 'modify',
+      });
+    }
+
+    // Add status changes
+    if (activeFix?.actionType === 'pause_campaign') {
+      items.push({
+        field: 'status',
+        label: 'Campaign Status',
+        currentValue: 'Enabled',
+        newValue: 'Paused',
+        type: 'modify',
+      });
+    }
+
+    return items;
+  }, [issue.category, evidenceItems, activeFix, campaign.budget, includedCount]);
 
   const toggleEvidence = (id: string) => {
     setEvidenceItems(items =>
@@ -90,9 +145,15 @@ export default function FixPanel({
   };
 
   const handleApplyFix = async () => {
+    // Open the safe apply modal instead of applying directly
+    setShowApplyModal(true);
+  };
+
+  const handleApplyWithMode = (mode: ApplyMode) => {
     if (!activeFix) return;
     setIsApplying(true);
 
+    // Add the action with the selected mode
     addAction({
       actionType: mapToActionType(activeFix.actionType),
       entityType: 'campaign',
@@ -101,9 +162,12 @@ export default function FixPanel({
       currentValue: 'current',
       newValue: activeFix.action,
       reason: issue.summary,
+      // Include mode info for later processing
+      metadata: { applyMode: mode, enableRollback },
     });
 
     setIsApplying(false);
+    setShowApplyModal(false);
     onClose();
   };
 
@@ -184,33 +248,47 @@ export default function FixPanel({
 
         {/* Section 2: Proposed Change (Diff) */}
         <div className="px-5 py-4 border-b border-[var(--divider)]">
-          <h4 className="text-[11px] font-semibold text-[var(--text3)] uppercase tracking-wide mb-3">
-            Proposed Change
-          </h4>
-          <div className="bg-[var(--surface2)] rounded-xl p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-[13px] text-[var(--text2)]">Negative keywords</span>
-              <div className="flex items-center gap-2">
-                <span className="text-[13px] text-[var(--text3)] line-through">0</span>
-                <svg className="w-4 h-4 text-[var(--text3)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                </svg>
-                <span className="text-[14px] font-semibold text-[var(--text)] tabular-nums">{includedCount}</span>
-              </div>
-            </div>
-            {/* Scope selector */}
-            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[var(--divider)]">
-              <span className="text-[12px] text-[var(--text3)]">Apply at:</span>
-              <div className="flex gap-1">
-                <button className="px-2 py-1 text-[12px] font-medium bg-[var(--accent)] text-white rounded-md">
-                  Campaign
-                </button>
-                <button className="px-2 py-1 text-[12px] font-medium text-[var(--text2)] hover:bg-[var(--surface3)] rounded-md transition-colors">
-                  Ad group
-                </button>
-              </div>
-            </div>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-[11px] font-semibold text-[var(--text3)] uppercase tracking-wide">
+              Proposed Change
+            </h4>
+            <button
+              onClick={() => setShowDiffView(!showDiffView)}
+              className="text-[11px] text-[var(--accent)] hover:underline"
+            >
+              {showDiffView ? 'Hide details' : 'Show diff view'}
+            </button>
           </div>
+
+          {/* Compact summary or full DiffView */}
+          {showDiffView ? (
+            <DiffView items={diffItems} />
+          ) : (
+            <div className="bg-[var(--surface2)] rounded-xl p-4">
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] text-[var(--text2)]">Negative keywords</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[13px] text-[var(--text3)] line-through">0</span>
+                  <svg className="w-4 h-4 text-[var(--text3)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                  </svg>
+                  <span className="text-[14px] font-semibold text-[var(--text)] tabular-nums">{includedCount}</span>
+                </div>
+              </div>
+              {/* Scope selector */}
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[var(--divider)]">
+                <span className="text-[12px] text-[var(--text3)]">Apply at:</span>
+                <div className="flex gap-1">
+                  <button className="px-2 py-1 text-[12px] font-medium bg-[var(--accent)] text-white rounded-md">
+                    Campaign
+                  </button>
+                  <button className="px-2 py-1 text-[12px] font-medium text-[var(--text2)] hover:bg-[var(--surface3)] rounded-md transition-colors">
+                    Ad group
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Section 3: Impact */}
@@ -360,13 +438,33 @@ export default function FixPanel({
             disabled={isApplying || includedCount === 0}
             className="flex-1 h-10 px-4 bg-[var(--accent)] text-white text-[14px] font-medium rounded-xl hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {isApplying ? 'Adding...' : 'Add to Queue'}
+            {isApplying ? 'Adding...' : 'Review & Apply'}
           </button>
-          <button className="h-10 px-4 bg-[var(--surface2)] text-[var(--text)] text-[14px] font-medium rounded-xl hover:bg-[var(--surface3)] transition-colors">
-            Schedule
+          <button
+            onClick={() => handleApplyWithMode('direct')}
+            disabled={isApplying || includedCount === 0}
+            className="h-10 px-4 bg-[var(--surface2)] text-[var(--text)] text-[14px] font-medium rounded-xl hover:bg-[var(--surface3)] transition-colors disabled:opacity-50"
+          >
+            Quick Add
           </button>
         </div>
       </div>
+
+      {/* Safe Apply Modal */}
+      <SafeApplyModal
+        isOpen={showApplyModal}
+        onClose={() => setShowApplyModal(false)}
+        onConfirm={(mode) => handleApplyWithMode(mode)}
+        campaign={campaign}
+        issue={issue}
+        fix={activeFix}
+        changes={diffItems.map(d => ({
+          field: d.field,
+          currentValue: d.currentValue ?? '',
+          newValue: d.newValue ?? '',
+          type: d.type as 'add' | 'remove' | 'modify',
+        }))}
+      />
     </div>
   );
 }

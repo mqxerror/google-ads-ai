@@ -30,6 +30,8 @@ interface DashboardContextValue {
   resetToDefault: () => void;
   isCustomizing: boolean;
   setIsCustomizing: (value: boolean) => void;
+  currentPreset: DashboardPreset;
+  applyPreset: (preset: DashboardPreset) => void;
 }
 
 const DashboardContext = createContext<DashboardContextValue | undefined>(undefined);
@@ -45,6 +47,70 @@ const DEFAULT_WIDGETS: WidgetConfig[] = [
 ];
 
 const STORAGE_KEY = 'dashboard-widgets-config';
+const PRESET_KEY = 'dashboard-preset';
+
+export type DashboardPreset = 'default' | 'executive' | 'operator' | 'growth' | 'qa';
+
+// Preset configurations
+const PRESETS: Record<DashboardPreset, Partial<WidgetConfig>[]> = {
+  default: [
+    { id: 'metric-cards', visible: true, order: 0, size: 'full' },
+    { id: 'spend-trend', visible: true, order: 1, size: 'medium' },
+    { id: 'conversions-trend', visible: true, order: 2, size: 'medium' },
+    { id: 'campaign-distribution', visible: true, order: 3, size: 'medium' },
+    { id: 'top-campaigns', visible: true, order: 4, size: 'large' },
+    { id: 'ctr-trend', visible: false, order: 5, size: 'medium' },
+    { id: 'cpa-comparison', visible: false, order: 6, size: 'medium' },
+  ],
+  executive: [
+    // High-level KPIs, trends, minimal detail
+    { id: 'metric-cards', visible: true, order: 0, size: 'full' },
+    { id: 'spend-trend', visible: true, order: 1, size: 'large' },
+    { id: 'conversions-trend', visible: true, order: 2, size: 'large' },
+    { id: 'campaign-distribution', visible: false, order: 3, size: 'medium' },
+    { id: 'top-campaigns', visible: true, order: 4, size: 'full' },
+    { id: 'ctr-trend', visible: false, order: 5, size: 'medium' },
+    { id: 'cpa-comparison', visible: false, order: 6, size: 'medium' },
+  ],
+  operator: [
+    // Detailed performance, all widgets visible
+    { id: 'metric-cards', visible: true, order: 0, size: 'full' },
+    { id: 'spend-trend', visible: true, order: 1, size: 'medium' },
+    { id: 'conversions-trend', visible: true, order: 2, size: 'medium' },
+    { id: 'ctr-trend', visible: true, order: 3, size: 'medium' },
+    { id: 'cpa-comparison', visible: true, order: 4, size: 'medium' },
+    { id: 'campaign-distribution', visible: true, order: 5, size: 'medium' },
+    { id: 'top-campaigns', visible: true, order: 6, size: 'large' },
+  ],
+  growth: [
+    // Focus on conversions, CPA, scaling opportunities
+    { id: 'metric-cards', visible: true, order: 0, size: 'full' },
+    { id: 'conversions-trend', visible: true, order: 1, size: 'large' },
+    { id: 'cpa-comparison', visible: true, order: 2, size: 'large' },
+    { id: 'top-campaigns', visible: true, order: 3, size: 'full' },
+    { id: 'spend-trend', visible: true, order: 4, size: 'medium' },
+    { id: 'ctr-trend', visible: false, order: 5, size: 'medium' },
+    { id: 'campaign-distribution', visible: false, order: 6, size: 'medium' },
+  ],
+  qa: [
+    // Quality focus: CTR, distribution, issues
+    { id: 'metric-cards', visible: true, order: 0, size: 'full' },
+    { id: 'ctr-trend', visible: true, order: 1, size: 'large' },
+    { id: 'campaign-distribution', visible: true, order: 2, size: 'large' },
+    { id: 'cpa-comparison', visible: true, order: 3, size: 'medium' },
+    { id: 'top-campaigns', visible: true, order: 4, size: 'large' },
+    { id: 'spend-trend', visible: false, order: 5, size: 'medium' },
+    { id: 'conversions-trend', visible: false, order: 6, size: 'medium' },
+  ],
+};
+
+export const PRESET_INFO: Record<DashboardPreset, { label: string; description: string; icon: string }> = {
+  default: { label: 'Default', description: 'Balanced overview', icon: '📊' },
+  executive: { label: 'Executive', description: 'High-level KPIs & trends', icon: '👔' },
+  operator: { label: 'Operator', description: 'Full operational detail', icon: '⚙️' },
+  growth: { label: 'Growth', description: 'Conversions & scaling', icon: '📈' },
+  qa: { label: 'QA', description: 'Quality & distribution', icon: '🔍' },
+};
 
 // Initialize widgets from localStorage (SSR-safe)
 function getInitialWidgets(): WidgetConfig[] {
@@ -65,9 +131,23 @@ function getInitialWidgets(): WidgetConfig[] {
   return DEFAULT_WIDGETS;
 }
 
+function getInitialPreset(): DashboardPreset {
+  if (typeof window === 'undefined') return 'default';
+  try {
+    const saved = localStorage.getItem(PRESET_KEY);
+    if (saved && saved in PRESETS) {
+      return saved as DashboardPreset;
+    }
+  } catch {
+    // Ignore
+  }
+  return 'default';
+}
+
 export function DashboardProvider({ children }: { children: ReactNode }) {
   const [widgets, setWidgets] = useState<WidgetConfig[]>(getInitialWidgets);
   const [isCustomizing, setIsCustomizing] = useState(false);
+  const [currentPreset, setCurrentPreset] = useState<DashboardPreset>(getInitialPreset);
 
   // Save to localStorage when widgets change
   useEffect(() => {
@@ -112,7 +192,23 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
 
   const resetToDefault = useCallback(() => {
     setWidgets(DEFAULT_WIDGETS);
+    setCurrentPreset('default');
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.setItem(PRESET_KEY, 'default');
+  }, []);
+
+  const applyPreset = useCallback((preset: DashboardPreset) => {
+    const presetConfig = PRESETS[preset];
+    const newWidgets = DEFAULT_WIDGETS.map(widget => {
+      const presetWidget = presetConfig.find(p => p.id === widget.id);
+      if (presetWidget) {
+        return { ...widget, ...presetWidget };
+      }
+      return widget;
+    });
+    setWidgets(newWidgets);
+    setCurrentPreset(preset);
+    localStorage.setItem(PRESET_KEY, preset);
   }, []);
 
   const value: DashboardContextValue = {
@@ -123,6 +219,8 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     resetToDefault,
     isCustomizing,
     setIsCustomizing,
+    currentPreset,
+    applyPreset,
   };
 
   return (

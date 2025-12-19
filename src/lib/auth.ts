@@ -99,6 +99,7 @@ const providers = isDemoMode
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: isDemoMode ? undefined : PrismaAdapter(prisma),
   providers,
+  trustHost: true, // Trust localhost and other hosts
   callbacks: {
     async jwt({ token, account }) {
       const extToken = token as ExtendedJWT;

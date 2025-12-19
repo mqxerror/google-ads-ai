@@ -5,6 +5,7 @@ import { useDashboard, WidgetSize } from '@/contexts/DashboardContext';
 import { useAccount } from '@/contexts/AccountContext';
 import WidgetCustomizer from './WidgetCustomizer';
 import NarrativeStrip from './NarrativeStrip';
+import DashboardPresets from './DashboardPresets';
 import { WIDGET_COMPONENTS } from './widgets';
 
 export default function DashboardPage() {
@@ -68,6 +69,7 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <DashboardPresets />
           <select
             value={getCurrentDays()}
             onChange={(e) => handleDateRangeChange(Number(e.target.value))}

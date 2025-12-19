@@ -439,12 +439,39 @@ export function CampaignsDataProvider({ children }: { children: ReactNode }) {
     }
   }, [currentAccount?.id]);
 
-  // Fetch campaigns and daily metrics when account or date range changes
-  // Using stable dependencies to prevent infinite loops
+  // Load from cache on mount/account change - NO automatic API calls
+  // User must manually refresh to fetch fresh data (protects API limits)
   useEffect(() => {
     if (currentAccount?.id) {
-      fetchCampaigns();
-      fetchDailyMetrics();
+      // Only load from cache, don't make API calls automatically
+      const campaignsCacheKey = `campaigns-${currentAccount.id}`;
+      const metricsCacheKey = `metrics-${currentAccount.id}`;
+
+      const cachedCampaigns = getCache<Campaign[]>(campaignsCacheKey, dateRange);
+      if (cachedCampaigns) {
+        setCampaigns(cachedCampaigns);
+        setSyncStatus('idle');
+        // Get the cache timestamp for lastSyncedAt
+        try {
+          const cached = localStorage.getItem(CACHE_KEY_PREFIX + campaignsCacheKey);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            setLastSyncedAt(new Date(parsed.timestamp));
+          }
+        } catch {
+          // Ignore
+        }
+      }
+
+      const cachedMetrics = getCache<DailyMetrics[]>(metricsCacheKey, dateRange);
+      if (cachedMetrics) {
+        setDailyMetrics(cachedMetrics);
+        const startDate = new Date(dateRange.startDate);
+        const endDate = new Date(dateRange.endDate);
+        const expectedDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        const completeness = expectedDays > 0 ? Math.round((cachedMetrics.length / expectedDays) * 100) : 100;
+        setDataCompleteness(Math.min(completeness, 100));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAccount?.id, dateRange.startDate, dateRange.endDate]);
