@@ -1,5 +1,5 @@
 # Server Infrastructure Reference Guide
-**Last Updated:** December 16, 2025
+**Last Updated:** December 19, 2025
 
 ---
 
@@ -10,6 +10,7 @@
 | Main Server SSH | `ssh -p 2222 root@38.97.60.181` | root | 3F68ypfD1LOfcAd |
 | CloudPanel | https://38.97.60.181:8443 | (your account) | (your password) |
 | Dokploy (Main) | http://38.97.60.181:3000 | (your account) | (your password) |
+| **Google Ads AI Manager** | https://ads.mercan.com | Google OAuth | - |
 | **Dokploy (Apps)** | http://198.46.142.2:3000 | (your account) | (your password) |
 | **Apps Server SSH** | `ssh root@198.46.142.2` | root | rf38e6OlbJ47FTGXg2 |
 | n8n | http://38.97.60.181:5680 | wassim | 5ty6%TY^5ty6 |
@@ -97,12 +98,94 @@ curl -X POST "http://38.97.60.181:11235/crawl" \
   -d '{"urls": ["https://example.com"], "priority": 10}'
 ```
 
+### 2.7 Google Ads AI Manager
+- **URL:** https://ads.mercan.com
+- **Authentication:** Google OAuth (requires Google Ads API access)
+- **Deployed:** December 19, 2025
+
+| Property | Value |
+|----------|-------|
+| **Domain** | ads.mercan.com |
+| **Dokploy App ID** | `8GB4bxm0DjkVeAQDoN91Y` |
+| **Dokploy Project ID** | `bjVBd0hITfPLFMpvYJQNa` |
+| **Container Name** | `google-ads-ai-wgwtgx` |
+| **Internal Port** | 3001 → 3000 |
+| **Database** | `google_ads_manager` (Supabase PostgreSQL) |
+| **GitHub Repo** | `mqxerror/google-ads-ai` (main branch) |
+| **Build Type** | Dockerfile (multi-stage) |
+
+**Architecture:**
+```
+                    ┌─────────────────┐
+    Internet ──────►│ Nginx (SSL)     │
+                    │ ads.mercan.com  │
+                    └────────┬────────┘
+                             │ proxy_pass
+                             ▼
+                    ┌─────────────────┐
+                    │ Docker Container│
+                    │ localhost:3001  │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Supabase PG     │
+                    │ :5433           │
+                    └─────────────────┘
+```
+
+**Environment Variables (set in Dokploy):**
+```
+DATABASE_URL=postgresql://postgres:[password]@38.97.60.181:5433/google_ads_manager
+NEXTAUTH_URL=https://ads.mercan.com
+NEXTAUTH_SECRET=[generated-secret]
+GOOGLE_CLIENT_ID=[google-oauth-client-id]
+GOOGLE_CLIENT_SECRET=[google-oauth-client-secret]
+GOOGLE_ADS_DEVELOPER_TOKEN=[google-ads-developer-token]
+ANTHROPIC_API_KEY=[anthropic-api-key]
+OPENAI_API_KEY=[openai-api-key]
+NODE_ENV=production
+```
+*Note: Actual values are stored in Dokploy environment configuration*
+
+**Google OAuth Callback URI (must be configured in Google Cloud Console):**
+```
+https://ads.mercan.com/api/auth/callback/google
+```
+
+**Nginx Configuration:**
+- Config file: `/etc/nginx/sites-enabled/ads.mercan.com.conf`
+- SSL: Let's Encrypt (auto-renewal via certbot)
+- Certificate expires: March 19, 2026
+
+**Management Commands:**
+```bash
+# View application logs
+docker logs $(docker ps -q --filter 'name=google-ads-ai') --tail 100
+
+# Restart application (via Dokploy API)
+curl -X POST 'http://38.97.60.181:3000/api/application.reload' \
+  -H 'x-api-key: qaBFTnweBNakQRcFNdQyFbsfnYhGxaKlDRDnhqtdfEdSrwOVmJJTofWXiVKHEYgC' \
+  -H 'Content-Type: application/json' \
+  -d '{"applicationId": "8GB4bxm0DjkVeAQDoN91Y", "appName": "google-ads-ai-wgwtgx"}'
+
+# Trigger new deployment
+curl -X POST 'http://38.97.60.181:3000/api/application.deploy' \
+  -H 'x-api-key: qaBFTnweBNakQRcFNdQyFbsfnYhGxaKlDRDnhqtdfEdSrwOVmJJTofWXiVKHEYgC' \
+  -H 'Content-Type: application/json' \
+  -d '{"applicationId": "8GB4bxm0DjkVeAQDoN91Y"}'
+
+# Run Prisma migrations (from local machine)
+DATABASE_URL="postgresql://postgres:[password]@38.97.60.181:5433/google_ads_manager" npx prisma migrate deploy
+```
+
 ---
 
 ## 3. Websites (CloudPanel Managed)
 
 | Website | Domain | Notes |
 |---------|--------|-------|
+| **Google Ads AI Manager** | ads.mercan.com | AI-powered Google Ads dashboard (Dokploy) |
 | **Mercan (Main)** | mercan.com, www.mercan.com | Primary business site |
 | **Mercan UAE** | www.mercan.ae | UAE branch |
 | **Immigration Story** | immigrationstory.ca | Content site |
@@ -249,7 +332,7 @@ curl -X POST "https://iopaint.pixelcraftedmedia.com/inpaint" \
 | 443 | HTTPS | CloudPanel sites |
 | 2222 | SSH | External |
 | 3000 | Dokploy | External |
-| 3001 | Supabase Studio (internal) | Localhost only |
+| 3001 | Google Ads AI Manager | Internal (nginx proxy) |
 | 3002 | Supabase Studio (protected) | External + Auth |
 | 5433 | Supabase PostgreSQL | External |
 | 5678 | n8n (internal) | Localhost only |
@@ -363,6 +446,10 @@ mysql -u root -p database_name < /root/backups/backup_20251215_213057/mysql/data
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 1.1
 **Created:** December 16, 2025
+**Updated:** December 19, 2025
 **Author:** System Documentation
+
+### Changelog
+- **v1.1 (Dec 19, 2025):** Added Google Ads AI Manager deployment documentation (ads.mercan.com)
