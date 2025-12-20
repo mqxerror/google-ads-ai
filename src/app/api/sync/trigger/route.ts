@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { syncService } from '@/lib/services/sync-service';
+import { enqueueSyncJob, isRedisConnected } from '@/lib/sync';
+import { EntityType } from '@prisma/client';
+import { format, subDays } from 'date-fns';
 
 /**
  * POST /api/sync/trigger
@@ -98,24 +101,60 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Trigger sync (in production, this would queue a background job)
-    // For now, we just return success - the actual sync will be implemented
-    // when we set up BullMQ in Phase C
+    // Calculate date range
+    const effectiveEndDate = endDate
+      ? endDate
+      : includeToday
+        ? format(new Date(), 'yyyy-MM-dd')
+        : format(subDays(new Date(), 1), 'yyyy-MM-dd');
+
+    const effectiveStartDate = startDate
+      ? startDate
+      : format(subDays(new Date(), 90), 'yyyy-MM-dd');
 
     console.log(`[Sync] Triggered for account ${googleAdsAccount.googleAccountId}`, {
-      startDate,
-      endDate,
+      startDate: effectiveStartDate,
+      endDate: effectiveEndDate,
       includeToday,
       forceRefresh,
     });
 
+    // Try to queue background jobs if Redis is available
+    const redisAvailable = isRedisConnected();
+    const queuedJobs: string[] = [];
+
+    if (redisAvailable) {
+      // Queue sync jobs for each entity type
+      const entityTypes = [EntityType.CAMPAIGN, EntityType.AD_GROUP, EntityType.KEYWORD];
+
+      for (const entityType of entityTypes) {
+        const job = await enqueueSyncJob({
+          accountId: googleAdsAccount.id,
+          customerId: googleAdsAccount.googleAccountId,
+          refreshToken: googleOAuthAccount.refresh_token!,
+          entityType,
+          startDate: effectiveStartDate,
+          endDate: effectiveEndDate,
+          priority: 'high',
+        });
+
+        if (job) {
+          queuedJobs.push(job.id || `${entityType}-job`);
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      message: 'Sync queued successfully',
+      message: redisAvailable
+        ? `Sync queued successfully (${queuedJobs.length} jobs)`
+        : 'Sync request received (Redis unavailable, will process on next API call)',
       syncId: `sync-${accountId}-${Date.now()}`,
+      queuedJobs,
+      redisAvailable,
       options: {
-        startDate: startDate || 'auto (90 days)',
-        endDate: endDate || 'auto (yesterday)',
+        startDate: effectiveStartDate,
+        endDate: effectiveEndDate,
         includeToday: includeToday || false,
         forceRefresh: forceRefresh || false,
       },
