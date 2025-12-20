@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { fetchAds, createAd, updateAd } from '@/lib/google-ads';
+import { EntityType, DataFreshness, Prisma } from '@prisma/client';
+import { isToday, parseISO } from 'date-fns';
 
 // Demo ads data
 const DEMO_ADS = [
@@ -123,20 +125,124 @@ export async function GET(request: NextRequest) {
     // Log the actual query being executed for debugging
     console.log(`[API] fetchAds - customerId: ${googleAdsAccount.googleAccountId}, adGroupId: ${adGroupId}, dateRange: ${startDate} to ${endDate}`);
 
-    // Fetch ads from Google Ads API with date filtering for consistent metrics
-    const ads = await fetchAds(
-      googleOAuthAccount.refresh_token,
-      googleAdsAccount.googleAccountId,
-      adGroupId,
-      startDate,
-      endDate,
-      googleAdsAccount.parentManagerId || undefined
-    );
+    // ========================================
+    // DB-FIRST STRATEGY: Check cache before API
+    // ========================================
+
+    // Check if we have cached data in MetricsFact table
+    const cachedMetrics = await prisma.metricsFact.findMany({
+      where: {
+        customerId: googleAdsAccount.googleAccountId,
+        entityType: EntityType.AD,
+        parentEntityId: adGroupId,
+        date: {
+          gte: new Date(startDate),
+          lte: new Date(endDate),
+        },
+      },
+      orderBy: { entityId: 'asc' },
+    });
+
+    // Get entity names from hierarchy cache
+    const entityNames = await prisma.entityHierarchy.findMany({
+      where: {
+        customerId: googleAdsAccount.googleAccountId,
+        entityType: EntityType.AD,
+        parentEntityId: adGroupId,
+      },
+    });
+    const nameMap = new Map(entityNames.map(e => [e.entityId, { name: e.entityName, status: e.status }]));
+
+    // Check cache freshness (less than 15 minutes old)
+    const hasFreshCache = cachedMetrics.length > 0 &&
+      cachedMetrics.some(m => {
+        const syncAge = Date.now() - m.syncedAt.getTime();
+        return syncAge < 15 * 60 * 1000; // 15 minutes
+      });
+
+    let ads;
+    let dataSource: 'cache' | 'api' = 'api';
+
+    if (hasFreshCache && nameMap.size > 0) {
+      // ✅ CACHE HIT - Build ads from cached metrics
+      console.log(`[API] Ads Cache HIT - returning ${cachedMetrics.length} cached metrics`);
+      dataSource = 'cache';
+
+      // Aggregate metrics by ad (sum across date range)
+      const adMetrics = new Map<string, {
+        impressions: number;
+        clicks: number;
+        cost: number;
+        conversions: number;
+        conversionValue: number;
+      }>();
+
+      for (const metric of cachedMetrics) {
+        const existing = adMetrics.get(metric.entityId) || {
+          impressions: 0,
+          clicks: 0,
+          cost: 0,
+          conversions: 0,
+          conversionValue: 0,
+        };
+
+        adMetrics.set(metric.entityId, {
+          impressions: existing.impressions + Number(metric.impressions),
+          clicks: existing.clicks + Number(metric.clicks),
+          cost: existing.cost + Number(metric.costMicros) / 1_000_000,
+          conversions: existing.conversions + Number(metric.conversions),
+          conversionValue: existing.conversionValue + Number(metric.conversionsValue),
+        });
+      }
+
+      // Build ad objects
+      ads = Array.from(adMetrics.entries()).map(([adId, metrics]) => {
+        const entityInfo = nameMap.get(adId);
+        const ctr = metrics.impressions > 0 ? (metrics.clicks / metrics.impressions) * 100 : 0;
+
+        return {
+          id: adId,
+          adGroupId,
+          type: 'RESPONSIVE_SEARCH_AD',
+          status: entityInfo?.status || 'ENABLED',
+          headlines: [], // Not stored in cache
+          descriptions: [], // Not stored in cache
+          finalUrls: [], // Not stored in cache
+          spend: metrics.cost,
+          clicks: metrics.clicks,
+          impressions: metrics.impressions,
+          conversions: metrics.conversions,
+          ctr,
+        };
+      });
+    } else {
+      // ❌ CACHE MISS - Fetch from Google Ads API
+      console.log(`[API] Ads Cache MISS - fetching from Google Ads API`);
+
+      ads = await fetchAds(
+        googleOAuthAccount.refresh_token,
+        googleAdsAccount.googleAccountId,
+        adGroupId,
+        startDate,
+        endDate,
+        googleAdsAccount.parentManagerId || undefined
+      );
+
+      // Store in MetricsFact for future cache hits (background, don't await)
+      storeAdMetrics(
+        googleAdsAccount.id,
+        googleAdsAccount.googleAccountId,
+        adGroupId,
+        ads,
+        endDate
+      ).catch(err => console.error('[API] Failed to cache ad metrics:', err));
+    }
 
     // Return data with metadata about the query that was executed
     return NextResponse.json({
       ads,
       _meta: {
+        source: dataSource,
         query: {
           customerId: googleAdsAccount.googleAccountId,
           adGroupId,
@@ -144,6 +250,10 @@ export async function GET(request: NextRequest) {
           endDate,
         },
         executedAt: new Date().toISOString(),
+        cacheInfo: {
+          hasFreshCache,
+          cachedAds: hasFreshCache ? ads.length : 0,
+        },
       },
     });
   } catch (error) {
@@ -333,4 +443,96 @@ export async function PATCH(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/**
+ * Store ad metrics in MetricsFact table for caching
+ */
+async function storeAdMetrics(
+  accountId: string,
+  customerId: string,
+  adGroupId: string,
+  ads: Array<{
+    id: string;
+    status: string;
+    spend: number;
+    clicks: number;
+    impressions: number;
+    conversions: number;
+  }>,
+  endDate: string
+): Promise<void> {
+  const dataFreshness = isToday(parseISO(endDate))
+    ? DataFreshness.PARTIAL
+    : DataFreshness.FINAL;
+
+  for (const ad of ads) {
+    // Store in MetricsFact
+    await prisma.metricsFact.upsert({
+      where: {
+        customerId_entityType_entityId_date: {
+          customerId,
+          entityType: EntityType.AD,
+          entityId: ad.id,
+          date: new Date(endDate),
+        },
+      },
+      create: {
+        customerId,
+        entityType: EntityType.AD,
+        entityId: ad.id,
+        parentEntityType: EntityType.AD_GROUP,
+        parentEntityId: adGroupId,
+        date: new Date(endDate),
+        impressions: BigInt(ad.impressions || 0),
+        clicks: BigInt(ad.clicks || 0),
+        costMicros: BigInt(Math.round((ad.spend || 0) * 1_000_000)),
+        conversions: new Prisma.Decimal(ad.conversions || 0),
+        conversionsValue: new Prisma.Decimal(0),
+        ctr: new Prisma.Decimal(ad.impressions > 0 ? ad.clicks / ad.impressions : 0),
+        averageCpc: new Prisma.Decimal(ad.clicks > 0 ? ad.spend / ad.clicks : 0),
+        accountId,
+        dataFreshness,
+      },
+      update: {
+        parentEntityId: adGroupId,
+        impressions: BigInt(ad.impressions || 0),
+        clicks: BigInt(ad.clicks || 0),
+        costMicros: BigInt(Math.round((ad.spend || 0) * 1_000_000)),
+        conversions: new Prisma.Decimal(ad.conversions || 0),
+        ctr: new Prisma.Decimal(ad.impressions > 0 ? ad.clicks / ad.impressions : 0),
+        averageCpc: new Prisma.Decimal(ad.clicks > 0 ? ad.spend / ad.clicks : 0),
+        dataFreshness,
+        syncedAt: new Date(),
+      },
+    });
+
+    // Store in EntityHierarchy for status lookup
+    await prisma.entityHierarchy.upsert({
+      where: {
+        customerId_entityType_entityId: {
+          customerId,
+          entityType: EntityType.AD,
+          entityId: ad.id,
+        },
+      },
+      create: {
+        customerId,
+        entityType: EntityType.AD,
+        entityId: ad.id,
+        entityName: `Ad ${ad.id}`,
+        status: ad.status,
+        parentEntityType: EntityType.AD_GROUP,
+        parentEntityId: adGroupId,
+        accountId,
+      },
+      update: {
+        status: ad.status,
+        parentEntityId: adGroupId,
+        lastUpdated: new Date(),
+      },
+    });
+  }
+
+  console.log(`[Cache] Stored ${ads.length} ads in MetricsFact`);
 }

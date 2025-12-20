@@ -3,6 +3,8 @@ import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { fetchKeywords, createKeywords, removeKeyword, updateKeyword } from '@/lib/google-ads';
 import { DEMO_KEYWORDS } from '@/lib/demo-data';
+import { EntityType, DataFreshness, Prisma } from '@prisma/client';
+import { isToday, parseISO } from 'date-fns';
 
 // GET /api/google-ads/keywords?accountId=xxx&adGroupId=xxx&startDate=xxx&endDate=xxx - Fetch keywords for an ad group
 export async function GET(request: NextRequest) {
@@ -79,20 +81,124 @@ export async function GET(request: NextRequest) {
     // Log the actual query being executed for debugging
     console.log(`[API] fetchKeywords - customerId: ${googleAdsAccount.googleAccountId}, adGroupId: ${adGroupId}, dateRange: ${startDate} to ${endDate}`);
 
-    // Fetch keywords from Google Ads API with date filtering for consistent metrics
-    const keywords = await fetchKeywords(
-      googleOAuthAccount.refresh_token,
-      googleAdsAccount.googleAccountId,
-      adGroupId,
-      startDate,
-      endDate,
-      googleAdsAccount.parentManagerId || undefined
-    );
+    // ========================================
+    // DB-FIRST STRATEGY: Check cache before API
+    // ========================================
+
+    // Check if we have cached data in MetricsFact table
+    const cachedMetrics = await prisma.metricsFact.findMany({
+      where: {
+        customerId: googleAdsAccount.googleAccountId,
+        entityType: EntityType.KEYWORD,
+        parentEntityId: adGroupId,
+        date: {
+          gte: new Date(startDate),
+          lte: new Date(endDate),
+        },
+      },
+      orderBy: { entityId: 'asc' },
+    });
+
+    // Get entity names from hierarchy cache
+    const entityNames = await prisma.entityHierarchy.findMany({
+      where: {
+        customerId: googleAdsAccount.googleAccountId,
+        entityType: EntityType.KEYWORD,
+        parentEntityId: adGroupId,
+      },
+    });
+    const nameMap = new Map(entityNames.map(e => [e.entityId, { name: e.entityName, status: e.status }]));
+
+    // Check cache freshness (less than 15 minutes old)
+    const hasFreshCache = cachedMetrics.length > 0 &&
+      cachedMetrics.some(m => {
+        const syncAge = Date.now() - m.syncedAt.getTime();
+        return syncAge < 15 * 60 * 1000; // 15 minutes
+      });
+
+    let keywords;
+    let dataSource: 'cache' | 'api' = 'api';
+
+    if (hasFreshCache && nameMap.size > 0) {
+      // ✅ CACHE HIT - Build keywords from cached metrics
+      console.log(`[API] Keywords Cache HIT - returning ${cachedMetrics.length} cached metrics`);
+      dataSource = 'cache';
+
+      // Aggregate metrics by keyword (sum across date range)
+      const keywordMetrics = new Map<string, {
+        impressions: number;
+        clicks: number;
+        cost: number;
+        conversions: number;
+        conversionValue: number;
+      }>();
+
+      for (const metric of cachedMetrics) {
+        const existing = keywordMetrics.get(metric.entityId) || {
+          impressions: 0,
+          clicks: 0,
+          cost: 0,
+          conversions: 0,
+          conversionValue: 0,
+        };
+
+        keywordMetrics.set(metric.entityId, {
+          impressions: existing.impressions + Number(metric.impressions),
+          clicks: existing.clicks + Number(metric.clicks),
+          cost: existing.cost + Number(metric.costMicros) / 1_000_000,
+          conversions: existing.conversions + Number(metric.conversions),
+          conversionValue: existing.conversionValue + Number(metric.conversionsValue),
+        });
+      }
+
+      // Build keyword objects
+      keywords = Array.from(keywordMetrics.entries()).map(([keywordId, metrics]) => {
+        const entityInfo = nameMap.get(keywordId);
+        const ctr = metrics.impressions > 0 ? (metrics.clicks / metrics.impressions) * 100 : 0;
+        const cpc = metrics.clicks > 0 ? metrics.cost / metrics.clicks : 0;
+
+        return {
+          id: keywordId,
+          adGroupId,
+          text: entityInfo?.name || `Keyword ${keywordId}`,
+          matchType: 'UNKNOWN', // Not stored in cache, will be overwritten on next API fetch
+          status: entityInfo?.status || 'ENABLED',
+          spend: metrics.cost,
+          clicks: metrics.clicks,
+          impressions: metrics.impressions,
+          conversions: metrics.conversions,
+          ctr,
+          cpc,
+        };
+      });
+    } else {
+      // ❌ CACHE MISS - Fetch from Google Ads API
+      console.log(`[API] Keywords Cache MISS - fetching from Google Ads API`);
+
+      keywords = await fetchKeywords(
+        googleOAuthAccount.refresh_token,
+        googleAdsAccount.googleAccountId,
+        adGroupId,
+        startDate,
+        endDate,
+        googleAdsAccount.parentManagerId || undefined
+      );
+
+      // Store in MetricsFact for future cache hits (background, don't await)
+      storeKeywordMetrics(
+        googleAdsAccount.id,
+        googleAdsAccount.googleAccountId,
+        adGroupId,
+        keywords,
+        endDate
+      ).catch(err => console.error('[API] Failed to cache keyword metrics:', err));
+    }
 
     // Return data with metadata about the query that was executed
     return NextResponse.json({
       keywords,
       _meta: {
+        source: dataSource,
         query: {
           customerId: googleAdsAccount.googleAccountId,
           adGroupId,
@@ -100,6 +206,10 @@ export async function GET(request: NextRequest) {
           endDate,
         },
         executedAt: new Date().toISOString(),
+        cacheInfo: {
+          hasFreshCache,
+          cachedKeywords: hasFreshCache ? keywords.length : 0,
+        },
       },
     });
   } catch (error) {
@@ -355,4 +465,98 @@ export async function DELETE(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/**
+ * Store keyword metrics in MetricsFact table for caching
+ */
+async function storeKeywordMetrics(
+  accountId: string,
+  customerId: string,
+  adGroupId: string,
+  keywords: Array<{
+    id: string;
+    text: string;
+    status: string;
+    spend: number;
+    clicks: number;
+    impressions: number;
+    conversions: number;
+  }>,
+  endDate: string
+): Promise<void> {
+  const dataFreshness = isToday(parseISO(endDate))
+    ? DataFreshness.PARTIAL
+    : DataFreshness.FINAL;
+
+  for (const keyword of keywords) {
+    // Store in MetricsFact
+    await prisma.metricsFact.upsert({
+      where: {
+        customerId_entityType_entityId_date: {
+          customerId,
+          entityType: EntityType.KEYWORD,
+          entityId: keyword.id,
+          date: new Date(endDate),
+        },
+      },
+      create: {
+        customerId,
+        entityType: EntityType.KEYWORD,
+        entityId: keyword.id,
+        parentEntityType: EntityType.AD_GROUP,
+        parentEntityId: adGroupId,
+        date: new Date(endDate),
+        impressions: BigInt(keyword.impressions || 0),
+        clicks: BigInt(keyword.clicks || 0),
+        costMicros: BigInt(Math.round((keyword.spend || 0) * 1_000_000)),
+        conversions: new Prisma.Decimal(keyword.conversions || 0),
+        conversionsValue: new Prisma.Decimal(0),
+        ctr: new Prisma.Decimal(keyword.impressions > 0 ? keyword.clicks / keyword.impressions : 0),
+        averageCpc: new Prisma.Decimal(keyword.clicks > 0 ? keyword.spend / keyword.clicks : 0),
+        accountId,
+        dataFreshness,
+      },
+      update: {
+        parentEntityId: adGroupId,
+        impressions: BigInt(keyword.impressions || 0),
+        clicks: BigInt(keyword.clicks || 0),
+        costMicros: BigInt(Math.round((keyword.spend || 0) * 1_000_000)),
+        conversions: new Prisma.Decimal(keyword.conversions || 0),
+        ctr: new Prisma.Decimal(keyword.impressions > 0 ? keyword.clicks / keyword.impressions : 0),
+        averageCpc: new Prisma.Decimal(keyword.clicks > 0 ? keyword.spend / keyword.clicks : 0),
+        dataFreshness,
+        syncedAt: new Date(),
+      },
+    });
+
+    // Store in EntityHierarchy for name/status lookup
+    await prisma.entityHierarchy.upsert({
+      where: {
+        customerId_entityType_entityId: {
+          customerId,
+          entityType: EntityType.KEYWORD,
+          entityId: keyword.id,
+        },
+      },
+      create: {
+        customerId,
+        entityType: EntityType.KEYWORD,
+        entityId: keyword.id,
+        entityName: keyword.text,
+        status: keyword.status,
+        parentEntityType: EntityType.AD_GROUP,
+        parentEntityId: adGroupId,
+        accountId,
+      },
+      update: {
+        entityName: keyword.text,
+        status: keyword.status,
+        parentEntityId: adGroupId,
+        lastUpdated: new Date(),
+      },
+    });
+  }
+
+  console.log(`[Cache] Stored ${keywords.length} keywords in MetricsFact`);
 }
