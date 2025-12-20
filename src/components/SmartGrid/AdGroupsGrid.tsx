@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { AdGroup } from '@/types/campaign';
 import { useAccount } from '@/contexts/AccountContext';
 import { useDrillDown } from '@/contexts/DrillDownContext';
@@ -10,6 +10,8 @@ import GridSkeleton from './GridSkeleton';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import { AdEditor } from '@/components/AdEditor';
 import { formatCurrency, formatNumber } from '@/lib/format';
+import { validateHierarchy, ValidationResult } from '@/lib/validation/hierarchy-validator';
+import HierarchyValidationBanner from '@/components/DataConsistency/HierarchyValidationBanner';
 
 function StatusBadge({ status }: { status: string }) {
   const colors = {
@@ -74,6 +76,38 @@ export default function AdGroupsGrid() {
     fetchAdGroups();
   }, [currentAccount?.id, selectedCampaign?.id, dateRange.startDate, dateRange.endDate]);
 
+  // Check if date range includes today (partial data)
+  const isPartialData = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    return dateRange.endDate >= today;
+  }, [dateRange.endDate]);
+
+  // Validate hierarchy: campaign metrics vs sum of ad group metrics
+  const hierarchyValidation: ValidationResult | null = useMemo(() => {
+    if (!selectedCampaign || adGroups.length === 0) return null;
+
+    // Use only fields available on both Campaign and AdGroup types
+    const parentMetrics = {
+      impressions: selectedCampaign.impressions || 0,
+      clicks: selectedCampaign.clicks || 0,
+      cost: selectedCampaign.spend || 0,
+      conversions: selectedCampaign.conversions || 0,
+    };
+
+    const childMetrics = adGroups.map(ag => ({
+      impressions: ag.impressions || 0,
+      clicks: ag.clicks || 0,
+      cost: ag.spend || 0,
+      conversions: ag.conversions || 0,
+    }));
+
+    return validateHierarchy(parentMetrics, childMetrics, {
+      parentName: selectedCampaign.name,
+      childrenName: 'Ad Groups',
+      isPartialData,
+    });
+  }, [selectedCampaign, adGroups, isPartialData]);
+
   // Determine if this is initial load (no cached data)
   const isInitialLoad = isLoading && adGroups.length === 0;
 
@@ -113,6 +147,15 @@ export default function AdGroupsGrid() {
       {isLoading && adGroups.length > 0 && (
         <LoadingOverlay message="Refreshing ad groups..." opacity={70} />
       )}
+
+      {/* Hierarchy validation banner */}
+      <HierarchyValidationBanner
+        validation={hierarchyValidation}
+        parentName={selectedCampaign?.name || 'Campaign'}
+        childrenName="Ad Groups"
+        isPartialData={isPartialData}
+      />
+
       <table className="w-full min-w-[800px]">
         <thead className="bg-gray-50">
           <tr>

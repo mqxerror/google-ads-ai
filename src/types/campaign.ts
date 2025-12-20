@@ -55,10 +55,12 @@ export interface AdGroup {
   campaignId: string;
   name: string;
   status: 'ENABLED' | 'PAUSED' | 'REMOVED';
+  impressions: number;
   clicks: number;
   conversions: number;
-  cpa: number;
   spend: number;
+  ctr: number;
+  cpa: number;
 }
 
 // Quality Score component ratings
