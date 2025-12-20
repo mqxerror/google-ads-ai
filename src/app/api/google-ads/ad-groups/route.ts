@@ -5,6 +5,13 @@ import { fetchAdGroups } from '@/lib/google-ads';
 import { DEMO_AD_GROUPS } from '@/lib/demo-data';
 import { EntityType, DataFreshness, Prisma } from '@prisma/client';
 import { isToday, parseISO } from 'date-fns';
+import {
+  createRefreshKey,
+  tryAcquireLock,
+  releaseLock,
+  setBackoff,
+  isRefreshing,
+} from '@/lib/refresh-lock';
 
 // GET /api/google-ads/ad-groups?accountId=xxx&campaignId=xxx&startDate=xxx&endDate=xxx - Fetch ad groups for a campaign
 export async function GET(request: NextRequest) {
@@ -109,19 +116,24 @@ export async function GET(request: NextRequest) {
     });
     const nameMap = new Map(entityNames.map(e => [e.entityId, { name: e.entityName, status: e.status }]));
 
-    // Check cache freshness (less than 15 minutes old)
-    const hasFreshCache = cachedMetrics.length > 0 &&
-      cachedMetrics.some(m => {
-        const syncAge = Date.now() - m.syncedAt.getTime();
-        return syncAge < 15 * 60 * 1000; // 15 minutes
-      });
+    // Check cache freshness with TTL thresholds
+    const oldestSync = cachedMetrics.length > 0
+      ? Math.min(...cachedMetrics.map(m => m.syncedAt.getTime()))
+      : 0;
+    const cacheAge = oldestSync > 0 ? Date.now() - oldestSync : Infinity;
+
+    const FRESH_THRESHOLD = 5 * 60 * 1000;  // 5 minutes - super fresh
+    const STALE_THRESHOLD = 15 * 60 * 1000; // 15 minutes - still usable
+
+    const hasFreshCache = cacheAge < STALE_THRESHOLD && cachedMetrics.length > 0;
+    const needsBackgroundRefresh = cacheAge >= FRESH_THRESHOLD && cacheAge < STALE_THRESHOLD;
 
     let adGroups;
     let dataSource: 'cache' | 'api' = 'api';
 
     if (hasFreshCache && nameMap.size > 0) {
       // ✅ CACHE HIT - Build ad groups from cached metrics
-      console.log(`[API] Ad Groups Cache HIT - returning ${cachedMetrics.length} cached metrics`);
+      console.log(`[API] Ad Groups Cache HIT - returning ${cachedMetrics.length} cached metrics (age: ${Math.round(cacheAge / 1000)}s)`);
       dataSource = 'cache';
 
       // Aggregate metrics by ad group (sum across date range)
@@ -170,6 +182,20 @@ export async function GET(request: NextRequest) {
           cpa,
         };
       });
+
+      // 🔄 STALE-WHILE-REVALIDATE: Trigger background refresh if cache is getting old
+      if (needsBackgroundRefresh) {
+        console.log(`[API] Ad Groups Cache STALE - triggering background refresh`);
+        backgroundRefreshAdGroups(
+          googleOAuthAccount.refresh_token!,
+          googleAdsAccount.id,
+          googleAdsAccount.googleAccountId,
+          campaignId,
+          googleAdsAccount.parentManagerId || undefined,
+          startDate,
+          endDate
+        ).catch(err => console.error('[API] Background refresh failed:', err));
+      }
     } else {
       // ❌ CACHE MISS - Fetch from Google Ads API
       console.log(`[API] Ad Groups Cache MISS - fetching from Google Ads API`);
@@ -193,11 +219,29 @@ export async function GET(request: NextRequest) {
       ).catch(err => console.error('[API] Failed to cache ad group metrics:', err));
     }
 
-    // Return data with metadata about the query that was executed
+    // Check if a background refresh is in progress
+    const refreshKey = createRefreshKey(
+      googleAdsAccount.googleAccountId,
+      'AD_GROUP',
+      campaignId,
+      startDate,
+      endDate
+    );
+    const refreshInProgress = isRefreshing(refreshKey);
+
+    // Calculate oldest sync time for metadata
+    const oldestSyncDate = cachedMetrics.length > 0
+      ? new Date(Math.min(...cachedMetrics.map(m => m.syncedAt.getTime())))
+      : null;
+
+    // Return data with comprehensive metadata
     return NextResponse.json({
       adGroups,
       _meta: {
         source: dataSource,
+        ageSeconds: cacheAge === Infinity ? null : Math.round(cacheAge / 1000),
+        lastSyncedAt: oldestSyncDate?.toISOString() || null,
+        refreshing: refreshInProgress,
         query: {
           customerId: googleAdsAccount.googleAccountId,
           campaignId,
@@ -205,10 +249,6 @@ export async function GET(request: NextRequest) {
           endDate,
         },
         executedAt: new Date().toISOString(),
-        cacheInfo: {
-          hasFreshCache,
-          cachedAdGroups: hasFreshCache ? adGroups.length : 0,
-        },
       },
     });
   } catch (error) {
@@ -312,4 +352,60 @@ async function storeAdGroupMetrics(
   }
 
   console.log(`[Cache] Stored ${adGroups.length} ad groups in MetricsFact`);
+}
+
+/**
+ * Background refresh ad groups with lock protection
+ * Fetches fresh data from Google Ads API and updates the cache
+ */
+async function backgroundRefreshAdGroups(
+  refreshToken: string,
+  accountId: string,
+  customerId: string,
+  campaignId: string,
+  parentManagerId: string | undefined,
+  startDate: string,
+  endDate: string
+): Promise<void> {
+  const lockKey = createRefreshKey(customerId, 'AD_GROUP', campaignId, startDate, endDate);
+
+  // Try to acquire lock - if already refreshing, skip
+  if (!tryAcquireLock(lockKey)) {
+    return;
+  }
+
+  try {
+    console.log(`[Background] Starting ad groups refresh for campaign ${campaignId}`);
+
+    // Fetch fresh data from Google Ads API
+    const adGroups = await fetchAdGroups(
+      refreshToken,
+      customerId,
+      campaignId,
+      startDate,
+      endDate,
+      parentManagerId
+    );
+
+    // Store in cache
+    await storeAdGroupMetrics(accountId, customerId, campaignId, adGroups, endDate);
+
+    console.log(`[Background] Completed ad groups refresh: ${adGroups.length} ad groups`);
+  } catch (error) {
+    const errorStr = String(error);
+
+    // Check for rate limit and set backoff
+    const retryMatch = errorStr.match(/Retry in (\d+) seconds/);
+    if (retryMatch) {
+      const retrySeconds = parseInt(retryMatch[1], 10);
+      setBackoff(lockKey, retrySeconds);
+      console.error(`[Background] Rate limited, backing off for ${retrySeconds}s`);
+    } else {
+      // For other errors, set a short backoff to prevent hammering
+      setBackoff(lockKey, 60);
+      console.error(`[Background] Refresh failed:`, error);
+    }
+  } finally {
+    releaseLock(lockKey);
+  }
 }

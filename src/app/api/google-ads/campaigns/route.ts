@@ -6,6 +6,13 @@ import { getOrSet, createCacheKey, invalidateAccountCache, CACHE_TTL } from '@/l
 import { DEMO_CAMPAIGNS } from '@/lib/demo-data';
 import { EntityType, DataFreshness, Prisma } from '@prisma/client';
 import { isToday, parseISO } from 'date-fns';
+import {
+  createRefreshKey,
+  tryAcquireLock,
+  releaseLock,
+  setBackoff,
+  isRefreshing,
+} from '@/lib/refresh-lock';
 
 // GET /api/google-ads/campaigns?accountId=xxx - Fetch campaigns for an account
 export async function GET(request: NextRequest) {
@@ -112,19 +119,24 @@ export async function GET(request: NextRequest) {
     });
     const nameMap = new Map(entityNames.map(e => [e.entityId, { name: e.entityName, status: e.status }]));
 
-    // Check cache freshness (less than 15 minutes old)
-    const hasFreshCache = cachedMetrics.length > 0 &&
-      cachedMetrics.some(m => {
-        const syncAge = Date.now() - m.syncedAt.getTime();
-        return syncAge < 15 * 60 * 1000; // 15 minutes
-      });
+    // Check cache freshness
+    const oldestSync = cachedMetrics.length > 0
+      ? Math.min(...cachedMetrics.map(m => m.syncedAt.getTime()))
+      : 0;
+    const cacheAge = oldestSync > 0 ? Date.now() - oldestSync : Infinity;
+
+    const FRESH_THRESHOLD = 5 * 60 * 1000;  // 5 minutes - super fresh
+    const STALE_THRESHOLD = 15 * 60 * 1000; // 15 minutes - still usable
+
+    const hasFreshCache = cacheAge < STALE_THRESHOLD && cachedMetrics.length > 0;
+    const needsBackgroundRefresh = cacheAge >= FRESH_THRESHOLD && cacheAge < STALE_THRESHOLD;
 
     let campaigns;
     let dataSource: 'cache' | 'api' = 'api';
 
     if (hasFreshCache && nameMap.size > 0) {
       // ✅ CACHE HIT - Build campaigns from cached metrics
-      console.log(`[API] Cache HIT - returning ${cachedMetrics.length} cached metrics`);
+      console.log(`[API] Cache HIT - returning ${cachedMetrics.length} cached metrics (age: ${Math.round(cacheAge / 1000)}s)`);
       dataSource = 'cache';
 
       // Aggregate metrics by campaign (sum across date range)
@@ -165,7 +177,7 @@ export async function GET(request: NextRequest) {
           id: campaignId,
           name: entityInfo?.name || `Campaign ${campaignId}`,
           status: entityInfo?.status || 'ENABLED',
-          type: 'SEARCH', // Would need to store this in hierarchy
+          type: (entityInfo as { campaignType?: string })?.campaignType || 'SEARCH',
           spend: metrics.cost,
           clicks: metrics.clicks,
           impressions: metrics.impressions,
@@ -177,6 +189,19 @@ export async function GET(request: NextRequest) {
           aiScore: Math.floor(Math.random() * 30) + 70, // Placeholder
         };
       });
+
+      // 🔄 STALE-WHILE-REVALIDATE: Trigger background refresh if cache is getting old
+      if (needsBackgroundRefresh) {
+        console.log(`[API] Cache STALE - triggering background refresh`);
+        backgroundRefreshCampaigns(
+          googleOAuthAccount.refresh_token!,
+          googleAdsAccount.id,
+          googleAdsAccount.googleAccountId,
+          googleAdsAccount.parentManagerId || undefined,
+          startDate,
+          endDate
+        ).catch(err => console.error('[API] Background refresh failed:', err));
+      }
     } else {
       // ❌ CACHE MISS - Fetch from Google Ads API
       console.log(`[API] Cache MISS - fetching from Google Ads API`);
@@ -209,27 +234,43 @@ export async function GET(request: NextRequest) {
       ).catch(err => console.error('[API] Failed to cache metrics:', err));
     }
 
-    // Update last sync time
-    await prisma.googleAdsAccount.update({
-      where: { id: accountId },
-      data: { lastSyncAt: new Date() },
-    });
+    // Update last sync time (only on API fetch)
+    if (dataSource === 'api') {
+      await prisma.googleAdsAccount.update({
+        where: { id: accountId },
+        data: { lastSyncAt: new Date() },
+      });
+    }
 
-    // Return data with metadata about the query that was executed
+    // Check if a background refresh is in progress
+    const refreshKey = createRefreshKey(
+      googleAdsAccount.googleAccountId,
+      'CAMPAIGN',
+      undefined,
+      startDate,
+      endDate
+    );
+    const refreshInProgress = isRefreshing(refreshKey);
+
+    // Calculate oldest sync time for metadata
+    const oldestSyncDate = cachedMetrics.length > 0
+      ? new Date(Math.min(...cachedMetrics.map(m => m.syncedAt.getTime())))
+      : null;
+
+    // Return data with comprehensive metadata
     return NextResponse.json({
       campaigns,
       _meta: {
         source: dataSource,
+        ageSeconds: cacheAge === Infinity ? null : Math.round(cacheAge / 1000),
+        lastSyncedAt: oldestSyncDate?.toISOString() || null,
+        refreshing: refreshInProgress,
         query: {
           customerId: googleAdsAccount.googleAccountId,
           startDate,
           endDate,
         },
         executedAt: new Date().toISOString(),
-        cacheInfo: {
-          hasFreshCache,
-          cachedCampaigns: hasFreshCache ? campaigns.length : 0,
-        },
       },
     });
   } catch (error) {
@@ -422,7 +463,7 @@ async function storeCampaignMetrics(
       },
     });
 
-    // Store in EntityHierarchy for name/status lookup
+    // Store in EntityHierarchy for name/status/type lookup
     await prisma.entityHierarchy.upsert({
       where: {
         customerId_entityType_entityId: {
@@ -437,17 +478,79 @@ async function storeCampaignMetrics(
         entityId: campaign.id,
         entityName: campaign.name,
         status: campaign.status,
+        campaignType: campaign.type || null,
         accountId,
       },
       update: {
         entityName: campaign.name,
         status: campaign.status,
+        campaignType: campaign.type || null,
         lastUpdated: new Date(),
       },
     });
   }
 
   console.log(`[Cache] Stored ${campaigns.length} campaigns in MetricsFact`);
+}
+
+/**
+ * Background refresh campaigns with lock protection
+ * Fetches fresh data from Google Ads API and updates the cache
+ */
+async function backgroundRefreshCampaigns(
+  refreshToken: string,
+  accountId: string,
+  customerId: string,
+  parentManagerId: string | undefined,
+  startDate: string,
+  endDate: string
+): Promise<void> {
+  const lockKey = createRefreshKey(customerId, 'CAMPAIGN', undefined, startDate, endDate);
+
+  // Try to acquire lock - if already refreshing, skip
+  if (!tryAcquireLock(lockKey)) {
+    return;
+  }
+
+  try {
+    console.log(`[Background] Starting campaign refresh for ${customerId}`);
+
+    // Fetch fresh data from Google Ads API
+    const campaigns = await fetchCampaigns(
+      refreshToken,
+      customerId,
+      parentManagerId,
+      startDate,
+      endDate
+    );
+
+    // Store in cache
+    await storeCampaignMetrics(accountId, customerId, campaigns, endDate);
+
+    // Update last sync time
+    await prisma.googleAdsAccount.update({
+      where: { id: accountId },
+      data: { lastSyncAt: new Date() },
+    });
+
+    console.log(`[Background] Completed campaign refresh: ${campaigns.length} campaigns`);
+  } catch (error) {
+    const errorStr = String(error);
+
+    // Check for rate limit and set backoff
+    const retryMatch = errorStr.match(/Retry in (\d+) seconds/);
+    if (retryMatch) {
+      const retrySeconds = parseInt(retryMatch[1], 10);
+      setBackoff(lockKey, retrySeconds);
+      console.error(`[Background] Rate limited, backing off for ${retrySeconds}s`);
+    } else {
+      // For other errors, set a short backoff to prevent hammering
+      setBackoff(lockKey, 60);
+      console.error(`[Background] Refresh failed:`, error);
+    }
+  } finally {
+    releaseLock(lockKey);
+  }
 }
 
 // PATCH /api/google-ads/campaigns - Update an existing campaign
