@@ -20,6 +20,7 @@ import ViewsDropdown from './ViewsDropdown';
 import Breadcrumbs from './Breadcrumbs';
 import { AIDock } from '@/components/AIDock';
 import { FixPanel } from '@/components/FixPanel';
+import { formatCurrency, formatNumber } from '@/lib/format';
 import AdGroupsGrid from './AdGroupsGrid';
 import AdGroupContentTabs from './AdGroupContentTabs';
 import BulkActionsBar from './BulkActionsBar';
@@ -28,7 +29,8 @@ import VirtualizedGrid, { useVirtualization } from './VirtualizedGrid';
 import { Recommendation } from '@/lib/recommendations';
 import { checkActionGuardrails, checkBulkActionsGuardrails, GuardrailResult, ActionWithAIScore } from '@/lib/guardrails';
 import { CampaignIssue } from '@/types/health';
-import DateRangePicker, { DateRange, getDefaultDateRange } from '@/components/DateRangePicker';
+import DateRangePicker, { DateRange } from '@/components/DateRangePicker';
+import { useCampaignsData } from '@/contexts/CampaignsDataContext';
 import { CampaignEditor } from '@/components/CampaignEditor';
 import { BudgetManager } from '@/components/BudgetManager';
 import { BudgetReallocationModal } from '@/components/BudgetOptimizer';
@@ -43,7 +45,7 @@ interface GridSettings {
   sortConfig: SortConfig;
   filters: FilterConfig;
   activeView: string;
-  dateRange: DateRange;
+  // dateRange is now managed by CampaignsDataContext (single source of truth)
   searchQuery: string;
   showFilters: boolean;
 }
@@ -78,6 +80,8 @@ export default function SmartGrid() {
   const { isOpen, entity, entityType, openPanel, closePanel } = useDetailPanel();
   const { addAction, actions: queuedActions } = useActionQueue();
   const { settings: guardrailSettings } = useGuardrails();
+  // Use context's dateRange as single source of truth for consistent data across all views
+  const { dateRange: contextDateRange, setDateRange: setContextDateRange } = useCampaignsData();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -87,7 +91,16 @@ export default function SmartGrid() {
   const [showFilters, setShowFilters] = useState(false);
   const [activeView, setActiveView] = useState('all');
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
-  const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange);
+  // Convert context dateRange to DateRange type with preset
+  const dateRange: DateRange = {
+    startDate: contextDateRange.startDate,
+    endDate: contextDateRange.endDate,
+    preset: (contextDateRange.preset as DateRange['preset']) || 'custom',
+  };
+  const setDateRange = (range: DateRange) => {
+    console.log('[SmartGrid] Setting date range via context:', range);
+    setContextDateRange(range);
+  };
   const [isCampaignEditorOpen, setIsCampaignEditorOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [isBudgetManagerOpen, setIsBudgetManagerOpen] = useState(false);
@@ -116,7 +129,7 @@ export default function SmartGrid() {
       setSortConfig(saved.sortConfig);
       setFilters(saved.filters);
       setActiveView(saved.activeView);
-      setDateRange(saved.dateRange);
+      // dateRange is now managed by CampaignsDataContext (not restored from grid settings)
       setSearchQuery(saved.searchQuery);
       setShowFilters(saved.showFilters);
     }
@@ -131,11 +144,11 @@ export default function SmartGrid() {
       sortConfig,
       filters,
       activeView,
-      dateRange,
+      // dateRange is now managed by CampaignsDataContext (not saved in grid settings)
       searchQuery,
       showFilters,
     });
-  }, [currentAccount?.id, sortConfig, filters, activeView, dateRange, searchQuery, showFilters]);
+  }, [currentAccount?.id, sortConfig, filters, activeView, searchQuery, showFilters]);
 
   // Guardrail state
   const [guardrailDialogOpen, setGuardrailDialogOpen] = useState(false);
@@ -873,7 +886,7 @@ export default function SmartGrid() {
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-red-800">
-                  ${wastedSpendStats.totalWasted.toLocaleString('en-US', { minimumFractionDigits: 2 })} Potential Wasted Spend
+                  {formatCurrency(wastedSpendStats.totalWasted)} Potential Wasted Spend
                 </h3>
                 <p className="text-sm text-red-600">
                   {wastedSpendStats.count} campaign{wastedSpendStats.count !== 1 ? 's' : ''} with spend {'>'} $100 and no conversions
@@ -906,8 +919,8 @@ export default function SmartGrid() {
             )}
           </div>
           <div className="flex items-center gap-6 text-[var(--text2)]">
-            <span>Spend: <strong className="text-[var(--text)] tabular-nums">${summaryStats.totalSpend.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</strong></span>
-            <span>Conv: <strong className="text-[var(--text)] tabular-nums">{summaryStats.totalConversions.toFixed(0)}</strong></span>
+            <span>Spend: <strong className="text-[var(--text)] tabular-nums">{formatCurrency(summaryStats.totalSpend)}</strong></span>
+            <span>Conv: <strong className="text-[var(--text)] tabular-nums">{formatNumber(summaryStats.totalConversions, { decimals: 2 })}</strong></span>
           </div>
         </div>
       )}

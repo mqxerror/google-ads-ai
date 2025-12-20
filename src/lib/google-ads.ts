@@ -11,6 +11,19 @@ const BACKOFF_CONFIG = {
   backoffMultiplier: 2,
 };
 
+// Debug logging for GAQL queries (only in development)
+const DEBUG_QUERIES = process.env.NODE_ENV === 'development' || process.env.DEBUG_GAQL === 'true';
+
+function logQuery(operation: string, customerId: string, query: string, dateRange?: { startDate: string; endDate: string }) {
+  if (DEBUG_QUERIES) {
+    console.log(`\n[GAQL] ${operation} | Customer: ${customerId}`);
+    if (dateRange) {
+      console.log(`[GAQL] Date Range: ${dateRange.startDate} to ${dateRange.endDate}`);
+    }
+    console.log(`[GAQL] Query:\n${query.trim()}\n`);
+  }
+}
+
 // Rate limit key generator for Google Ads API
 function getGoogleAdsRateLimitKey(customerId: string): string {
   return `google-ads:${customerId}`;
@@ -241,9 +254,7 @@ export async function fetchCampaigns(
   }
 
   try {
-    // Wrap API call with exponential backoff for resilience
-    const campaigns = await withExponentialBackoff(
-      () => customer.query(`
+    const query = `
         SELECT
           campaign.id,
           campaign.name,
@@ -261,7 +272,13 @@ export async function fetchCampaigns(
         WHERE campaign.status != 'REMOVED'
           ${dateClause}
         ORDER BY metrics.cost_micros DESC
-      `),
+      `;
+
+    logQuery('fetchCampaigns', customerId, query, startDate && endDate ? { startDate, endDate } : undefined);
+
+    // Wrap API call with exponential backoff for resilience
+    const campaigns = await withExponentialBackoff(
+      () => customer.query(query),
       customerId,
       'fetchCampaigns'
     );
@@ -312,37 +329,55 @@ export async function fetchCampaigns(
 }
 
 // Fetch ad groups for a campaign
-export async function fetchAdGroups(refreshToken: string, customerId: string, campaignId: string, loginCustomerId?: string) {
+export async function fetchAdGroups(
+  refreshToken: string,
+  customerId: string,
+  campaignId: string,
+  startDate: string,   // YYYY-MM-DD - REQUIRED for consistency
+  endDate: string,     // YYYY-MM-DD - REQUIRED for consistency
+  loginCustomerId?: string
+) {
   const client = createGoogleAdsClient(refreshToken);
   const customer = getCustomer(client, customerId, refreshToken, loginCustomerId);
 
   try {
-    const adGroups = await customer.query(`
+    // CRITICAL: Use same date filtering as campaigns for data consistency
+    const query = `
       SELECT
         ad_group.id,
         ad_group.name,
         ad_group.status,
+        metrics.impressions,
         metrics.clicks,
         metrics.conversions,
         metrics.cost_micros
       FROM ad_group
       WHERE ad_group.campaign = 'customers/${customerId}/campaigns/${campaignId}'
         AND ad_group.status != 'REMOVED'
+        AND segments.date BETWEEN '${startDate}' AND '${endDate}'
       ORDER BY metrics.cost_micros DESC
-    `);
+    `;
+
+    logQuery('fetchAdGroups', customerId, query, { startDate, endDate });
+
+    const adGroups = await customer.query(query);
 
     return adGroups.map((row) => {
       const spend = (row.metrics?.cost_micros || 0) / 1_000_000;
       const conversions = row.metrics?.conversions || 0;
+      const clicks = row.metrics?.clicks || 0;
+      const impressions = row.metrics?.impressions || 0;
 
       return {
         id: row.ad_group?.id?.toString() || '',
         campaignId,
         name: row.ad_group?.name || '',
         status: mapStatus(row.ad_group?.status),
-        clicks: row.metrics?.clicks || 0,
+        impressions,
+        clicks,
         conversions,
         spend,
+        ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
         cpa: conversions > 0 ? spend / conversions : 0,
       };
     });
@@ -353,13 +388,21 @@ export async function fetchAdGroups(refreshToken: string, customerId: string, ca
 }
 
 // Fetch keywords for an ad group
-export async function fetchKeywords(refreshToken: string, customerId: string, adGroupId: string, loginCustomerId?: string) {
+export async function fetchKeywords(
+  refreshToken: string,
+  customerId: string,
+  adGroupId: string,
+  startDate: string,   // YYYY-MM-DD - REQUIRED for consistency
+  endDate: string,     // YYYY-MM-DD - REQUIRED for consistency
+  loginCustomerId?: string
+) {
   const client = createGoogleAdsClient(refreshToken);
   const customer = getCustomer(client, customerId, refreshToken, loginCustomerId);
 
   try {
     // Use keyword_view to get metrics - ad_group_criterion doesn't support metrics directly
-    const keywords = await customer.query(`
+    // CRITICAL: Use same date filtering as campaigns/ad groups for data consistency
+    const query = `
       SELECT
         keyword_view.resource_name,
         ad_group_criterion.criterion_id,
@@ -367,18 +410,26 @@ export async function fetchKeywords(refreshToken: string, customerId: string, ad
         ad_group_criterion.keyword.match_type,
         ad_group_criterion.status,
         ad_group_criterion.quality_info.quality_score,
+        metrics.impressions,
         metrics.clicks,
         metrics.conversions,
         metrics.cost_micros
       FROM keyword_view
       WHERE ad_group_criterion.ad_group = 'customers/${customerId}/adGroups/${adGroupId}'
         AND ad_group_criterion.status != 'REMOVED'
+        AND segments.date BETWEEN '${startDate}' AND '${endDate}'
       ORDER BY metrics.cost_micros DESC
-    `);
+    `;
+
+    logQuery('fetchKeywords', customerId, query, { startDate, endDate });
+
+    const keywords = await customer.query(query);
 
     return keywords.map((row) => {
       const spend = (row.metrics?.cost_micros || 0) / 1_000_000;
       const conversions = row.metrics?.conversions || 0;
+      const clicks = row.metrics?.clicks || 0;
+      const impressions = row.metrics?.impressions || 0;
 
       return {
         id: row.ad_group_criterion?.criterion_id?.toString() || '',
@@ -387,9 +438,11 @@ export async function fetchKeywords(refreshToken: string, customerId: string, ad
         matchType: row.ad_group_criterion?.keyword?.match_type || 'BROAD',
         status: mapStatus(row.ad_group_criterion?.status),
         qualityScore: row.ad_group_criterion?.quality_info?.quality_score || 0,
-        clicks: row.metrics?.clicks || 0,
+        impressions,
+        clicks,
         conversions,
         spend,
+        ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
         cpa: conversions > 0 ? spend / conversions : 0,
       };
     });
@@ -723,13 +776,16 @@ export async function fetchAds(
   refreshToken: string,
   customerId: string,
   adGroupId: string,
+  startDate: string,   // YYYY-MM-DD - REQUIRED for consistency
+  endDate: string,     // YYYY-MM-DD - REQUIRED for consistency
   loginCustomerId?: string
 ) {
   const client = createGoogleAdsClient(refreshToken);
   const customer = getCustomer(client, customerId, refreshToken, loginCustomerId);
 
   try {
-    const ads = await customer.query(`
+    // CRITICAL: Use same date filtering as campaigns/ad groups/keywords for data consistency
+    const query = `
       SELECT
         ad_group_ad.ad.id,
         ad_group_ad.status,
@@ -746,12 +802,19 @@ export async function fetchAds(
       FROM ad_group_ad
       WHERE ad_group_ad.ad_group = 'customers/${customerId}/adGroups/${adGroupId}'
         AND ad_group_ad.status != 'REMOVED'
+        AND segments.date BETWEEN '${startDate}' AND '${endDate}'
       ORDER BY metrics.cost_micros DESC
-    `);
+    `;
+
+    logQuery('fetchAds', customerId, query, { startDate, endDate });
+
+    const ads = await customer.query(query);
 
     return ads.map((row) => {
       const spend = (row.metrics?.cost_micros || 0) / 1_000_000;
       const conversions = row.metrics?.conversions || 0;
+      const clicks = row.metrics?.clicks || 0;
+      const impressions = row.metrics?.impressions || 0;
       const rsa = row.ad_group_ad?.ad?.responsive_search_ad;
 
       return {
@@ -764,11 +827,12 @@ export async function fetchAds(
         finalUrls: row.ad_group_ad?.ad?.final_urls || [],
         path1: rsa?.path1 || '',
         path2: rsa?.path2 || '',
-        clicks: row.metrics?.clicks || 0,
-        impressions: row.metrics?.impressions || 0,
-        ctr: row.metrics?.ctr ? row.metrics.ctr * 100 : 0,
+        clicks,
+        impressions,
+        ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
         spend,
         conversions,
+        cpa: conversions > 0 ? spend / conversions : 0,
       };
     });
   } catch (error) {

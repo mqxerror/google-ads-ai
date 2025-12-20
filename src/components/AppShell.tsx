@@ -7,6 +7,7 @@ import ChatPanel from './ChatPanel';
 import ActionQueueDrawer from './ActionQueueDrawer';
 import GlobalUI from './GlobalUI';
 import Breadcrumb from './Breadcrumb/Breadcrumb';
+import QueryDebugPanel from './Debug/QueryDebugPanel';
 import { useActionQueue } from '@/contexts/ActionQueueContext';
 
 interface AppShellProps {
@@ -117,6 +118,9 @@ export default function AppShell({ children }: AppShellProps) {
 
       {/* Global UI Components (Command Palette, Keyboard Shortcuts, Toast, Mobile Nav) */}
       <GlobalUI />
+
+      {/* Debug Panel - Shows GAQL queries being used */}
+      <QueryDebugPanel />
     </div>
   );
 }

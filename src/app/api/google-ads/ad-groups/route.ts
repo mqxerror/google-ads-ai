@@ -4,7 +4,7 @@ import prisma from '@/lib/prisma';
 import { fetchAdGroups } from '@/lib/google-ads';
 import { DEMO_AD_GROUPS } from '@/lib/demo-data';
 
-// GET /api/google-ads/ad-groups?accountId=xxx&campaignId=xxx - Fetch ad groups for a campaign
+// GET /api/google-ads/ad-groups?accountId=xxx&campaignId=xxx&startDate=xxx&endDate=xxx - Fetch ad groups for a campaign
 export async function GET(request: NextRequest) {
   const session = await auth();
 
@@ -15,6 +15,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const accountId = searchParams.get('accountId');
   const campaignId = searchParams.get('campaignId');
+  const startDate = searchParams.get('startDate');
+  const endDate = searchParams.get('endDate');
 
   if (!accountId) {
     return NextResponse.json({ error: 'accountId is required' }, { status: 400 });
@@ -22,6 +24,13 @@ export async function GET(request: NextRequest) {
 
   if (!campaignId) {
     return NextResponse.json({ error: 'campaignId is required' }, { status: 400 });
+  }
+
+  if (!startDate || !endDate) {
+    return NextResponse.json(
+      { error: 'startDate and endDate are required for consistent metrics' },
+      { status: 400 }
+    );
   }
 
   // Demo mode - return mock ad groups for the campaign
@@ -67,15 +76,32 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Google Ads account not found' }, { status: 404 });
     }
 
-    // Fetch ad groups from Google Ads API
+    // Log the actual query being executed for debugging
+    console.log(`[API] fetchAdGroups - customerId: ${googleAdsAccount.googleAccountId}, campaignId: ${campaignId}, dateRange: ${startDate} to ${endDate}`);
+
+    // Fetch ad groups from Google Ads API with date filtering for consistent metrics
     const adGroups = await fetchAdGroups(
       googleOAuthAccount.refresh_token,
       googleAdsAccount.googleAccountId,
       campaignId,
+      startDate,
+      endDate,
       googleAdsAccount.parentManagerId || undefined
     );
 
-    return NextResponse.json({ adGroups });
+    // Return data with metadata about the query that was executed
+    return NextResponse.json({
+      adGroups,
+      _meta: {
+        query: {
+          customerId: googleAdsAccount.googleAccountId,
+          campaignId,
+          startDate,
+          endDate,
+        },
+        executedAt: new Date().toISOString(),
+      },
+    });
   } catch (error) {
     console.error('Error fetching ad groups:', error);
     return NextResponse.json(

@@ -20,11 +20,19 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const accountId = searchParams.get('accountId');
-  const startDate = searchParams.get('startDate') || undefined; // YYYY-MM-DD
-  const endDate = searchParams.get('endDate') || undefined;     // YYYY-MM-DD
+  const startDate = searchParams.get('startDate'); // YYYY-MM-DD - REQUIRED
+  const endDate = searchParams.get('endDate');     // YYYY-MM-DD - REQUIRED
 
   if (!accountId) {
     return NextResponse.json({ error: 'accountId is required' }, { status: 400 });
+  }
+
+  // Date range is required for consistent metrics across all entity levels
+  if (!startDate || !endDate) {
+    return NextResponse.json(
+      { error: 'startDate and endDate are required for consistent metrics' },
+      { status: 400 }
+    );
   }
 
   try {
@@ -73,13 +81,16 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Log the actual query being executed for debugging
+    console.log(`[API] fetchCampaigns - customerId: ${googleAdsAccount.googleAccountId}, dateRange: ${startDate} to ${endDate}`);
+
     // For MCC client accounts, we need to pass the loginCustomerId (parent manager ID)
     // Use caching to reduce API calls - cache for 5 minutes
     const cacheKey = createCacheKey(
       'campaigns',
       googleAdsAccount.googleAccountId,
-      startDate || 'default',
-      endDate || 'default'
+      startDate,
+      endDate
     );
 
     const campaigns = await getOrSet(
@@ -100,7 +111,18 @@ export async function GET(request: NextRequest) {
       data: { lastSyncAt: new Date() },
     });
 
-    return NextResponse.json({ campaigns });
+    // Return data with metadata about the query that was executed
+    return NextResponse.json({
+      campaigns,
+      _meta: {
+        query: {
+          customerId: googleAdsAccount.googleAccountId,
+          startDate,
+          endDate,
+        },
+        executedAt: new Date().toISOString(),
+      },
+    });
   } catch (error) {
     console.error('Error fetching campaigns:', error);
 

@@ -4,8 +4,21 @@ import { useState } from 'react';
 import { useMode } from '@/contexts/ModeContext';
 
 export default function ModeToggle() {
-  const { mode, toggleMode, isSimpleMode, isProMode } = useMode();
+  const { mode, toggleMode, isSimpleMode, isProMode, isHydrated } = useMode();
   const [showTooltip, setShowTooltip] = useState(false);
+
+  // Show a neutral placeholder during SSR/hydration to prevent mismatch
+  if (!isHydrated) {
+    return (
+      <div className="relative">
+        <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-medium">
+          <div className="h-4 w-4 rounded bg-gray-200 animate-pulse" />
+          <div className="h-4 w-10 rounded bg-gray-200 animate-pulse" />
+          <div className="h-4 w-7 rounded-full bg-gray-200 animate-pulse" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative">

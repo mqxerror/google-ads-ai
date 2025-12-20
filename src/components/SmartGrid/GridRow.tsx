@@ -5,6 +5,7 @@ import { Campaign, CampaignType } from '@/types/campaign';
 import { CampaignIssue } from '@/types/health';
 import ScoreBreakdownPopover from './ScoreBreakdownPopover';
 import { FixDrawer } from '@/components/FixDrawer';
+import { formatCurrency, formatNumber } from '@/lib/format';
 
 interface GridRowProps {
   campaign: Campaign;
@@ -133,20 +134,7 @@ export default function GridRow({
     }
   };
 
-  const formatCurrency = (value: number) => {
-    if (value === 0) return '-';
-    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-  };
-
-  const formatNumber = (value: number) => {
-    if (value === 0) return '-';
-    return value.toLocaleString('en-US');
-  };
-
-  const formatCPA = (value: number) => {
-    if (value === 0) return '-';
-    return `$${value.toFixed(0)}`;
-  };
+  // Use centralized formatters for exact values (2 decimal places for currency)
 
   return (
     <tr
@@ -199,7 +187,7 @@ export default function GridRow({
       {/* CPA (Pro mode shows more metrics) */}
       <td className="px-4 text-right">
         <span className="text-[14px] text-[var(--text2)] tabular-nums">
-          {formatCPA(campaign.cpa)}
+          {campaign.cpa > 0 ? formatCurrency(campaign.cpa) : '-'}
         </span>
       </td>
 

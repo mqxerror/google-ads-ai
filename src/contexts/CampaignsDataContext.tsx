@@ -88,6 +88,22 @@ function setRateLimited(): void {
   }
 }
 
+// API response metadata for debugging
+interface ApiQueryMeta {
+  customerId: string;
+  startDate: string;
+  endDate: string;
+  campaignId?: string;
+  adGroupId?: string;
+  executedAt: string;
+}
+
+interface LastApiResponse {
+  campaigns?: ApiQueryMeta;
+  adGroups?: ApiQueryMeta;
+  keywords?: ApiQueryMeta;
+}
+
 interface CampaignsDataContextValue {
   // Campaign data
   campaigns: Campaign[];
@@ -99,9 +115,9 @@ interface CampaignsDataContextValue {
   dailyMetrics: DailyMetrics[];
   isDailyMetricsLoading: boolean;
 
-  // Date range
-  dateRange: { startDate: string; endDate: string };
-  setDateRange: (range: { startDate: string; endDate: string }) => void;
+  // Date range (single source of truth for the entire app)
+  dateRange: { startDate: string; endDate: string; preset?: string };
+  setDateRange: (range: { startDate: string; endDate: string; preset?: string }) => void;
 
   // Data freshness tracking
   lastSyncedAt: Date | null;
@@ -117,24 +133,31 @@ interface CampaignsDataContextValue {
   keywords: Keyword[];
   fetchKeywords: (adGroupId: string) => Promise<void>;
   isKeywordsLoading: boolean;
+
+  // API response metadata for debugging (shows actual executed queries)
+  lastApiResponse: LastApiResponse;
 }
 
 const CampaignsDataContext = createContext<CampaignsDataContextValue | undefined>(undefined);
 
 const DATE_RANGE_KEY = 'dashboard-date-range';
 
-function getDefaultDateRange() {
+function getDefaultDateRange(): { startDate: string; endDate: string; preset: string } {
+  // Default to Last 7 Days ending yesterday to avoid partial/incomplete data for today
+  // Today's data is incomplete until midnight in the account's timezone
   const endDate = new Date();
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - 30);
+  endDate.setDate(endDate.getDate() - 1); // Yesterday
+  const startDate = new Date(endDate);
+  startDate.setDate(startDate.getDate() - 6); // 7 days ending yesterday
 
   return {
     startDate: startDate.toISOString().split('T')[0],
     endDate: endDate.toISOString().split('T')[0],
+    preset: 'last7days',
   };
 }
 
-function getSavedDateRange(): { startDate: string; endDate: string } | null {
+function getSavedDateRange(): { startDate: string; endDate: string; preset?: string } | null {
   if (typeof window === 'undefined') return null;
   try {
     const saved = localStorage.getItem(DATE_RANGE_KEY);
@@ -142,21 +165,25 @@ function getSavedDateRange(): { startDate: string; endDate: string } | null {
       const parsed = JSON.parse(saved);
       // Validate the dates are reasonable (not too old)
       const savedEnd = new Date(parsed.endDate);
-      const today = new Date();
-      const daysDiff = Math.abs((today.getTime() - savedEnd.getTime()) / (1000 * 60 * 60 * 24));
-      // If saved end date is more than 1 day off from today, recalculate
+      // Use yesterday as reference to avoid partial data
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const daysDiff = Math.abs((yesterday.getTime() - savedEnd.getTime()) / (1000 * 60 * 60 * 24));
+      // If saved end date is more than 1 day off from yesterday, recalculate
       if (daysDiff > 1) {
-        // Recalculate with same duration but ending today
+        // Recalculate with same duration but ending yesterday
         const savedStart = new Date(parsed.startDate);
         const duration = Math.ceil((savedEnd.getTime() - savedStart.getTime()) / (1000 * 60 * 60 * 24));
-        const newStart = new Date();
+        const newEnd = new Date(yesterday);
+        const newStart = new Date(newEnd);
         newStart.setDate(newStart.getDate() - duration);
         return {
           startDate: newStart.toISOString().split('T')[0],
-          endDate: today.toISOString().split('T')[0],
+          endDate: newEnd.toISOString().split('T')[0],
+          preset: parsed.preset || 'custom',
         };
       }
-      return parsed;
+      return { ...parsed, preset: parsed.preset || 'custom' };
     }
   } catch {
     // Ignore parse errors
@@ -198,7 +225,8 @@ export function CampaignsDataProvider({ children }: { children: ReactNode }) {
   const [dateRange, setDateRangeState] = useState(() => getSavedDateRange() || getDefaultDateRange());
 
   // Wrapper for setDateRange that also persists to localStorage
-  const setDateRange = useCallback((range: { startDate: string; endDate: string }) => {
+  const setDateRange = useCallback((range: { startDate: string; endDate: string; preset?: string }) => {
+    console.log('[CampaignsDataContext] Setting date range:', range);
     setDateRangeState(range);
     saveDateRange(range);
   }, []);
@@ -210,6 +238,9 @@ export function CampaignsDataProvider({ children }: { children: ReactNode }) {
   // Keywords state (for AI context when drilling down)
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [isKeywordsLoading, setIsKeywordsLoading] = useState(false);
+
+  // Track actual API response metadata for debugging
+  const [lastApiResponse, setLastApiResponse] = useState<LastApiResponse>({});
 
   // Fetch campaigns with caching and rate limiting
   const fetchCampaigns = useCallback(async (forceRefresh = false) => {
@@ -282,6 +313,17 @@ export function CampaignsDataProvider({ children }: { children: ReactNode }) {
       setLastSyncedAt(new Date());
       lastFetchTime.current = Date.now();
       setSyncStatus('idle');
+
+      // Capture API metadata for debugging
+      if (data._meta?.query) {
+        setLastApiResponse(prev => ({
+          ...prev,
+          campaigns: {
+            ...data._meta.query,
+            executedAt: data._meta.executedAt,
+          },
+        }));
+      }
     } catch (err) {
       console.error('Error fetching campaigns:', err);
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch campaigns';
@@ -377,7 +419,7 @@ export function CampaignsDataProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAccount?.id, dateRange.startDate, dateRange.endDate]);
 
-  // Fetch ad groups for a specific campaign
+  // Fetch ad groups for a specific campaign (with date range for metric consistency)
   const fetchAdGroups = useCallback(async (campaignId: string) => {
     if (!currentAccount?.id || !campaignId) {
       setAdGroups([]);
@@ -390,6 +432,8 @@ export function CampaignsDataProvider({ children }: { children: ReactNode }) {
       const params = new URLSearchParams({
         accountId: currentAccount.id,
         campaignId,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
       });
 
       const response = await fetch(`/api/google-ads/ad-groups?${params}`);
@@ -400,15 +444,26 @@ export function CampaignsDataProvider({ children }: { children: ReactNode }) {
 
       const data = await response.json();
       setAdGroups(data.adGroups || []);
+
+      // Capture API metadata for debugging
+      if (data._meta?.query) {
+        setLastApiResponse(prev => ({
+          ...prev,
+          adGroups: {
+            ...data._meta.query,
+            executedAt: data._meta.executedAt,
+          },
+        }));
+      }
     } catch (err) {
       console.error('Error fetching ad groups:', err);
       setAdGroups([]);
     } finally {
       setIsAdGroupsLoading(false);
     }
-  }, [currentAccount?.id]);
+  }, [currentAccount?.id, dateRange.startDate, dateRange.endDate]);
 
-  // Fetch keywords for a specific ad group
+  // Fetch keywords for a specific ad group (with date range for metric consistency)
   const fetchKeywords = useCallback(async (adGroupId: string) => {
     if (!currentAccount?.id || !adGroupId) {
       setKeywords([]);
@@ -421,6 +476,8 @@ export function CampaignsDataProvider({ children }: { children: ReactNode }) {
       const params = new URLSearchParams({
         accountId: currentAccount.id,
         adGroupId,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
       });
 
       const response = await fetch(`/api/google-ads/keywords?${params}`);
@@ -431,13 +488,24 @@ export function CampaignsDataProvider({ children }: { children: ReactNode }) {
 
       const data = await response.json();
       setKeywords(data.keywords || []);
+
+      // Capture API metadata for debugging
+      if (data._meta?.query) {
+        setLastApiResponse(prev => ({
+          ...prev,
+          keywords: {
+            ...data._meta.query,
+            executedAt: data._meta.executedAt,
+          },
+        }));
+      }
     } catch (err) {
       console.error('Error fetching keywords:', err);
       setKeywords([]);
     } finally {
       setIsKeywordsLoading(false);
     }
-  }, [currentAccount?.id]);
+  }, [currentAccount?.id, dateRange.startDate, dateRange.endDate]);
 
   // Load from cache on mount/account change - NO automatic API calls
   // User must manually refresh to fetch fresh data (protects API limits)
@@ -506,6 +574,7 @@ export function CampaignsDataProvider({ children }: { children: ReactNode }) {
     keywords,
     fetchKeywords,
     isKeywordsLoading,
+    lastApiResponse,
   };
 
   return (

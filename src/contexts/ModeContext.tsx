@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
 export type UIMode = 'simple' | 'pro';
 
@@ -10,26 +10,32 @@ interface ModeContextType {
   toggleMode: () => void;
   isSimpleMode: boolean;
   isProMode: boolean;
+  isHydrated: boolean;
 }
 
 const ModeContext = createContext<ModeContextType | undefined>(undefined);
 
-// Initialize mode from localStorage (SSR-safe)
-function getInitialMode(): UIMode {
-  if (typeof window === 'undefined') return 'simple';
-  const saved = localStorage.getItem('uiMode') as UIMode;
-  if (saved === 'simple' || saved === 'pro') {
-    return saved;
-  }
-  return 'simple';
-}
+const DEFAULT_MODE: UIMode = 'simple';
 
 export function ModeProvider({ children }: { children: ReactNode }) {
-  const [mode, setModeState] = useState<UIMode>(getInitialMode);
+  // Start with default mode to match server render
+  const [mode, setModeState] = useState<UIMode>(DEFAULT_MODE);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  // Sync with localStorage after hydration to avoid mismatch
+  useEffect(() => {
+    const saved = localStorage.getItem('uiMode') as UIMode;
+    if (saved === 'simple' || saved === 'pro') {
+      setModeState(saved);
+    }
+    setIsHydrated(true);
+  }, []);
 
   const setMode = (newMode: UIMode) => {
     setModeState(newMode);
-    localStorage.setItem('uiMode', newMode);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('uiMode', newMode);
+    }
   };
 
   const toggleMode = () => {
@@ -37,8 +43,6 @@ export function ModeProvider({ children }: { children: ReactNode }) {
     setMode(newMode);
   };
 
-  // Always provide context, even during initialization
-  // Use the default state during SSR/initial render to avoid hydration mismatch
   return (
     <ModeContext.Provider
       value={{
@@ -47,6 +51,7 @@ export function ModeProvider({ children }: { children: ReactNode }) {
         toggleMode,
         isSimpleMode: mode === 'simple',
         isProMode: mode === 'pro',
+        isHydrated,
       }}
     >
       {children}

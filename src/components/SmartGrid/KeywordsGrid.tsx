@@ -5,8 +5,10 @@ import { Keyword } from '@/types/campaign';
 import { useAccount } from '@/contexts/AccountContext';
 import { useDrillDown } from '@/contexts/DrillDownContext';
 import { useDetailPanel } from '@/contexts/DetailPanelContext';
+import { useCampaignsData } from '@/contexts/CampaignsDataContext';
 import GridSkeleton from './GridSkeleton';
 import { KeywordEditor } from '@/components/KeywordEditor';
+import { formatCurrency, formatNumber } from '@/lib/format';
 
 function StatusBadge({ status }: { status: string }) {
   const colors = {
@@ -63,6 +65,7 @@ export default function KeywordsGrid() {
   const { currentAccount } = useAccount();
   const { selectedAdGroup } = useDrillDown();
   const { openPanel } = useDetailPanel();
+  const { dateRange } = useCampaignsData();
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,9 +81,14 @@ export default function KeywordsGrid() {
     try {
       setIsLoading(true);
       setError(null);
-      const response = await fetch(
-        `/api/google-ads/keywords?accountId=${currentAccount.id}&adGroupId=${selectedAdGroup.id}`
-      );
+      // Include date range for consistent metrics across all entity levels
+      const params = new URLSearchParams({
+        accountId: currentAccount.id,
+        adGroupId: selectedAdGroup.id,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+      });
+      const response = await fetch(`/api/google-ads/keywords?${params}`);
 
       if (!response.ok) {
         const data = await response.json();
@@ -96,7 +104,7 @@ export default function KeywordsGrid() {
     } finally {
       setIsLoading(false);
     }
-  }, [currentAccount?.id, selectedAdGroup?.id]);
+  }, [currentAccount?.id, selectedAdGroup?.id, dateRange.startDate, dateRange.endDate]);
 
   useEffect(() => {
     loadKeywords();
@@ -214,16 +222,16 @@ export default function KeywordsGrid() {
                   )}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">
-                  {keyword.clicks.toLocaleString()}
+                  {formatNumber(keyword.clicks)}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">
-                  {keyword.conversions.toFixed(1)}
+                  {formatNumber(keyword.conversions, { decimals: 1 })}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">
-                  ${keyword.spend.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  {formatCurrency(keyword.spend)}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">
-                  {keyword.cpa > 0 ? `$${keyword.cpa.toFixed(2)}` : '-'}
+                  {keyword.cpa > 0 ? formatCurrency(keyword.cpa) : '-'}
                 </td>
                 <td className="px-4 py-3 text-center">
                   <button

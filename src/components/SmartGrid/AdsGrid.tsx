@@ -4,9 +4,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAccount } from '@/contexts/AccountContext';
 import { useDrillDown } from '@/contexts/DrillDownContext';
 import { useDetailPanel } from '@/contexts/DetailPanelContext';
+import { useCampaignsData } from '@/contexts/CampaignsDataContext';
 import GridSkeleton from './GridSkeleton';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import { AdEditor } from '@/components/AdEditor';
+import { formatCurrency, formatNumber, formatPercent } from '@/lib/format';
 
 interface Ad {
   id: string;
@@ -60,6 +62,7 @@ export default function AdsGrid() {
   const { currentAccount } = useAccount();
   const { selectedAdGroup } = useDrillDown();
   const { openPanel } = useDetailPanel();
+  const { dateRange } = useCampaignsData();
   const [ads, setAds] = useState<Ad[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -76,9 +79,14 @@ export default function AdsGrid() {
     try {
       setIsLoading(true);
       setError(null);
-      const response = await fetch(
-        `/api/google-ads/ads?accountId=${currentAccount.id}&adGroupId=${selectedAdGroup.id}`
-      );
+      // Include date range for consistent metrics across all entity levels
+      const params = new URLSearchParams({
+        accountId: currentAccount.id,
+        adGroupId: selectedAdGroup.id,
+        startDate: dateRange.startDate,
+        endDate: dateRange.endDate,
+      });
+      const response = await fetch(`/api/google-ads/ads?${params}`);
 
       if (!response.ok) {
         const data = await response.json();
@@ -94,7 +102,7 @@ export default function AdsGrid() {
     } finally {
       setIsLoading(false);
     }
-  }, [currentAccount?.id, selectedAdGroup?.id]);
+  }, [currentAccount?.id, selectedAdGroup?.id, dateRange.startDate, dateRange.endDate]);
 
   useEffect(() => {
     loadAds();
@@ -221,19 +229,19 @@ export default function AdsGrid() {
                   <StatusBadge status={ad.status} />
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">
-                  {ad.impressions.toLocaleString()}
+                  {formatNumber(ad.impressions)}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">
-                  {ad.clicks.toLocaleString()}
+                  {formatNumber(ad.clicks)}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">
-                  {ad.ctr.toFixed(2)}%
+                  {formatPercent(ad.ctr)}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">
-                  {ad.conversions.toFixed(1)}
+                  {formatNumber(ad.conversions, { decimals: 1 })}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900">
-                  ${ad.spend.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  {formatCurrency(ad.spend)}
                 </td>
                 <td className="px-4 py-3 text-center">
                   <div className="flex items-center justify-center gap-2">

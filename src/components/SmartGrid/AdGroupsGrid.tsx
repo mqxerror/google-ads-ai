@@ -5,9 +5,11 @@ import { AdGroup } from '@/types/campaign';
 import { useAccount } from '@/contexts/AccountContext';
 import { useDrillDown } from '@/contexts/DrillDownContext';
 import { useDetailPanel } from '@/contexts/DetailPanelContext';
+import { useCampaignsData } from '@/contexts/CampaignsDataContext';
 import GridSkeleton from './GridSkeleton';
 import LoadingOverlay from '@/components/ui/LoadingOverlay';
 import { AdEditor } from '@/components/AdEditor';
+import { formatCurrency, formatNumber } from '@/lib/format';
 
 function StatusBadge({ status }: { status: string }) {
   const colors = {
@@ -26,6 +28,7 @@ export default function AdGroupsGrid() {
   const { currentAccount } = useAccount();
   const { selectedCampaign, drillIntoAdGroup } = useDrillDown();
   const { openPanel } = useDetailPanel();
+  const { dateRange } = useCampaignsData();
   const [adGroups, setAdGroups] = useState<AdGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,9 +46,14 @@ export default function AdGroupsGrid() {
       try {
         setIsLoading(true);
         setError(null);
-        const response = await fetch(
-          `/api/google-ads/ad-groups?accountId=${currentAccount.id}&campaignId=${selectedCampaign.id}`
-        );
+        // Include date range for consistent metrics across all entity levels
+        const params = new URLSearchParams({
+          accountId: currentAccount.id,
+          campaignId: selectedCampaign.id,
+          startDate: dateRange.startDate,
+          endDate: dateRange.endDate,
+        });
+        const response = await fetch(`/api/google-ads/ad-groups?${params}`);
 
         if (!response.ok) {
           const data = await response.json();
@@ -64,7 +72,7 @@ export default function AdGroupsGrid() {
     };
 
     fetchAdGroups();
-  }, [currentAccount?.id, selectedCampaign?.id]);
+  }, [currentAccount?.id, selectedCampaign?.id, dateRange.startDate, dateRange.endDate]);
 
   // Determine if this is initial load (no cached data)
   const isInitialLoad = isLoading && adGroups.length === 0;
@@ -153,16 +161,16 @@ export default function AdGroupsGrid() {
                 <StatusBadge status={adGroup.status} />
               </td>
               <td className="px-4 py-3 text-right font-medium text-gray-900">
-                {adGroup.clicks.toLocaleString()}
+                {formatNumber(adGroup.clicks)}
               </td>
               <td className="px-4 py-3 text-right font-medium text-gray-900">
-                {adGroup.conversions.toFixed(1)}
+                {formatNumber(adGroup.conversions, { decimals: 1 })}
               </td>
               <td className="px-4 py-3 text-right font-medium text-gray-900">
-                ${adGroup.spend.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                {formatCurrency(adGroup.spend)}
               </td>
               <td className="px-4 py-3 text-right font-medium text-gray-900">
-                {adGroup.cpa > 0 ? `$${adGroup.cpa.toFixed(2)}` : '-'}
+                {adGroup.cpa > 0 ? formatCurrency(adGroup.cpa) : '-'}
               </td>
               <td className="px-4 py-3 text-center">
                 <div className="flex items-center justify-center gap-2">

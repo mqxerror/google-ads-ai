@@ -49,7 +49,7 @@ const DEMO_ADS = [
   },
 ];
 
-// GET /api/google-ads/ads?accountId=xxx&adGroupId=xxx - Fetch ads for an ad group
+// GET /api/google-ads/ads?accountId=xxx&adGroupId=xxx&startDate=xxx&endDate=xxx - Fetch ads for an ad group
 export async function GET(request: NextRequest) {
   const session = await auth();
 
@@ -60,6 +60,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const accountId = searchParams.get('accountId');
   const adGroupId = searchParams.get('adGroupId');
+  const startDate = searchParams.get('startDate');
+  const endDate = searchParams.get('endDate');
 
   if (!accountId) {
     return NextResponse.json({ error: 'accountId is required' }, { status: 400 });
@@ -67,6 +69,13 @@ export async function GET(request: NextRequest) {
 
   if (!adGroupId) {
     return NextResponse.json({ error: 'adGroupId is required' }, { status: 400 });
+  }
+
+  if (!startDate || !endDate) {
+    return NextResponse.json(
+      { error: 'startDate and endDate are required for consistent metrics' },
+      { status: 400 }
+    );
   }
 
   // Demo mode - return mock ads for the ad group
@@ -111,14 +120,32 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Google Ads account not found' }, { status: 404 });
     }
 
+    // Log the actual query being executed for debugging
+    console.log(`[API] fetchAds - customerId: ${googleAdsAccount.googleAccountId}, adGroupId: ${adGroupId}, dateRange: ${startDate} to ${endDate}`);
+
+    // Fetch ads from Google Ads API with date filtering for consistent metrics
     const ads = await fetchAds(
       googleOAuthAccount.refresh_token,
       googleAdsAccount.googleAccountId,
       adGroupId,
+      startDate,
+      endDate,
       googleAdsAccount.parentManagerId || undefined
     );
 
-    return NextResponse.json({ ads });
+    // Return data with metadata about the query that was executed
+    return NextResponse.json({
+      ads,
+      _meta: {
+        query: {
+          customerId: googleAdsAccount.googleAccountId,
+          adGroupId,
+          startDate,
+          endDate,
+        },
+        executedAt: new Date().toISOString(),
+      },
+    });
   } catch (error) {
     console.error('Error fetching ads:', error);
     return NextResponse.json(
