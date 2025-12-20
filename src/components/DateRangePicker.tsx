@@ -81,7 +81,13 @@ export default function DateRangePicker({ value, onChange }: DateRangePickerProp
   const [showCustom, setShowCustom] = useState(value.preset === 'custom');
   const [customStart, setCustomStart] = useState(value.startDate);
   const [customEnd, setCustomEnd] = useState(value.endDate);
+  const [mounted, setMounted] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Prevent hydration mismatch by only rendering dynamic content after mount
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -120,9 +126,12 @@ export default function DateRangePicker({ value, onChange }: DateRangePickerProp
     }
   };
 
-  const displayLabel = value.preset === 'custom'
-    ? `${formatDisplayDate(value.startDate)} - ${formatDisplayDate(value.endDate)}`
-    : getPresetLabel(value.preset);
+  // Use stable label during SSR, then show actual dates after hydration
+  const displayLabel = !mounted
+    ? getPresetLabel(value.preset) // Stable label for SSR
+    : value.preset === 'custom'
+      ? `${formatDisplayDate(value.startDate)} - ${formatDisplayDate(value.endDate)}`
+      : getPresetLabel(value.preset);
 
   return (
     <div className="relative" ref={dropdownRef}>
