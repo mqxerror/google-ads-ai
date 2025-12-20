@@ -104,6 +104,9 @@ model GoogleAdsAccount {
   entityHierarchy EntityHierarchy[]
   customKpis      CustomKpi[]
 
+  // Background job tracking
+  refreshJobLogs  RefreshJobLog[]
+
   @@index([userId])
   @@index([googleAccountId])
   @@index([parentManagerId])
@@ -405,4 +408,54 @@ model CustomKpi {
   @@index([accountId])
 
   @@map("custom_kpi")
+}
+
+// ============================================================================
+// BACKGROUND JOB TRACKING
+// ============================================================================
+
+/// RefreshJobLog - Tracks background refresh job outcomes for observability
+model RefreshJobLog {
+  id              String    @id @default(cuid())
+  jobId           String    // BullMQ job ID (deterministic key)
+  customerId      String    // Google Ads Customer ID
+  accountId       String    // Internal account ID
+
+  // Job details
+  jobType         String    // refresh:campaigns, refresh:ad-groups, etc.
+  parentEntityId  String?   // campaignId or adGroupId if applicable
+  startDate       String    // Query start date
+  endDate         String    // Query end date
+  priority        String    @default("normal") // normal | high (manual)
+
+  // Execution details
+  status          String    // queued | processing | completed | failed | retrying
+  attemptNumber   Int       @default(1)
+
+  // Timing
+  enqueuedAt      DateTime
+  startedAt       DateTime?
+  completedAt     DateTime?
+  durationMs      Int?
+
+  // Results
+  entityCount     Int?      // Number of entities refreshed
+  apiCalls        Int       @default(1) // Number of Google Ads API calls
+  errorMessage    String?   @db.Text
+
+  // Retry info
+  nextRetryAt     DateTime?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  account         GoogleAdsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, jobType])
+  @@index([accountId])
+  @@index([status])
+  @@index([enqueuedAt])
+  @@index([jobId])
+
+  @@map("refresh_job_log")
 }

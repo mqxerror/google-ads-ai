@@ -10,6 +10,11 @@ import {
   releaseLock,
   setBackoff,
   isRefreshing,
+  recordCacheHit,
+  recordCacheMiss,
+  recordStaleRefresh,
+  recordRefreshError,
+  CACHE_TTL,
 } from '@/lib/refresh-lock';
 
 // Generate demo metrics for a date range
@@ -117,17 +122,22 @@ export async function GET(request: NextRequest) {
       orderBy: { date: 'asc' },
     });
 
-    // Check cache freshness with TTL thresholds
+    // Check cache freshness using production TTLs
     const oldestSync = cachedMetrics.length > 0
       ? Math.min(...cachedMetrics.map(m => m.syncedAt.getTime()))
       : 0;
     const cacheAge = oldestSync > 0 ? Date.now() - oldestSync : Infinity;
 
-    const FRESH_THRESHOLD = 5 * 60 * 1000;  // 5 minutes - super fresh
-    const STALE_THRESHOLD = 15 * 60 * 1000; // 15 minutes - still usable
+    // TTL Strategy:
+    // - Fresh (<5m): return cache, no refresh needed
+    // - Stale (5m-24h): return cache immediately + trigger background refresh
+    // - Expired (>24h or no cache): fetch from API (blocking)
+    const isFresh = cacheAge < CACHE_TTL.FRESH;
+    const isStale = cacheAge >= CACHE_TTL.FRESH && cacheAge < CACHE_TTL.STALE;
+    const isExpired = cacheAge >= CACHE_TTL.STALE;
 
-    const hasFreshCache = cacheAge < STALE_THRESHOLD && cachedMetrics.length > 0;
-    const needsBackgroundRefresh = cacheAge >= FRESH_THRESHOLD && cacheAge < STALE_THRESHOLD;
+    const hasFreshCache = (isFresh || isStale) && cachedMetrics.length > 0;
+    const needsBackgroundRefresh = isStale && cachedMetrics.length > 0;
 
     // Check if we have all dates in the range cached
     const startD = new Date(startDate);
@@ -140,7 +150,9 @@ export async function GET(request: NextRequest) {
 
     if (hasFreshCache && hasAllDays) {
       // ✅ CACHE HIT - Build daily metrics from cache
-      console.log(`[API] Reports Cache HIT - returning ${cachedMetrics.length} cached daily metrics (age: ${Math.round(cacheAge / 1000)}s)`);
+      const stateLabel = isFresh ? 'FRESH' : 'STALE';
+      console.log(`[API] Reports Cache HIT (${stateLabel}) - returning ${cachedMetrics.length} cached daily metrics (age: ${Math.round(cacheAge / 1000)}s)`);
+      recordCacheHit();
       dataSource = 'cache';
 
       metrics = cachedMetrics.map(m => ({
@@ -155,6 +167,7 @@ export async function GET(request: NextRequest) {
       // 🔄 STALE-WHILE-REVALIDATE: Trigger background refresh if cache is getting old
       if (needsBackgroundRefresh) {
         console.log(`[API] Reports Cache STALE - triggering background refresh`);
+        recordStaleRefresh();
         backgroundRefreshReports(
           googleOAuthAccount.refresh_token!,
           googleAdsAccount.id,
@@ -167,6 +180,7 @@ export async function GET(request: NextRequest) {
     } else {
       // ❌ CACHE MISS - Fetch from Google Ads API
       console.log(`[API] Reports Cache MISS - fetching from Google Ads API`);
+      recordCacheMiss();
 
       metrics = await fetchDailyMetrics(
         googleOAuthAccount.refresh_token,
@@ -299,8 +313,9 @@ async function backgroundRefreshReports(
 ): Promise<void> {
   const lockKey = createRefreshKey(customerId, 'ACCOUNT', undefined, startDate, endDate);
 
-  // Try to acquire lock - if already refreshing, skip
-  if (!tryAcquireLock(lockKey)) {
+  // Try to acquire lock - returns owner token if acquired, null if already locked
+  const ownerToken = tryAcquireLock(lockKey);
+  if (!ownerToken) {
     return;
   }
 
@@ -322,12 +337,13 @@ async function backgroundRefreshReports(
     console.log(`[Background] Completed reports refresh: ${metrics.length} days`);
   } catch (error) {
     const errorStr = String(error);
+    recordRefreshError();
 
     // Check for rate limit and set backoff
     const retryMatch = errorStr.match(/Retry in (\d+) seconds/);
     if (retryMatch) {
       const retrySeconds = parseInt(retryMatch[1], 10);
-      setBackoff(lockKey, retrySeconds);
+      setBackoff(lockKey, retrySeconds, true); // Global backoff on rate limit
       console.error(`[Background] Rate limited, backing off for ${retrySeconds}s`);
     } else {
       // For other errors, set a short backoff to prevent hammering
@@ -335,6 +351,6 @@ async function backgroundRefreshReports(
       console.error(`[Background] Refresh failed:`, error);
     }
   } finally {
-    releaseLock(lockKey);
+    releaseLock(lockKey, ownerToken);
   }
 }

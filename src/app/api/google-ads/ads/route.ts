@@ -6,11 +6,13 @@ import { EntityType, DataFreshness, Prisma } from '@prisma/client';
 import { isToday, parseISO } from 'date-fns';
 import {
   createRefreshKey,
-  tryAcquireLock,
-  releaseLock,
-  setBackoff,
   isRefreshing,
+  recordCacheHit,
+  recordCacheMiss,
+  recordStaleRefresh,
+  CACHE_TTL,
 } from '@/lib/refresh-lock';
+import { enqueueAdRefresh } from '@/lib/queue';
 
 // Demo ads data
 const DEMO_ADS = [
@@ -160,24 +162,31 @@ export async function GET(request: NextRequest) {
     });
     const nameMap = new Map(entityNames.map(e => [e.entityId, { name: e.entityName, status: e.status }]));
 
-    // Check cache freshness with TTL thresholds
+    // Check cache freshness using production TTLs
     const oldestSync = cachedMetrics.length > 0
       ? Math.min(...cachedMetrics.map(m => m.syncedAt.getTime()))
       : 0;
     const cacheAge = oldestSync > 0 ? Date.now() - oldestSync : Infinity;
 
-    const FRESH_THRESHOLD = 5 * 60 * 1000;  // 5 minutes - super fresh
-    const STALE_THRESHOLD = 15 * 60 * 1000; // 15 minutes - still usable
+    // TTL Strategy:
+    // - Fresh (<5m): return cache, no refresh needed
+    // - Stale (5m-24h): return cache immediately + trigger background refresh
+    // - Expired (>24h or no cache): fetch from API (blocking)
+    const isFresh = cacheAge < CACHE_TTL.FRESH;
+    const isStale = cacheAge >= CACHE_TTL.FRESH && cacheAge < CACHE_TTL.STALE;
+    const isExpired = cacheAge >= CACHE_TTL.STALE;
 
-    const hasFreshCache = cacheAge < STALE_THRESHOLD && cachedMetrics.length > 0;
-    const needsBackgroundRefresh = cacheAge >= FRESH_THRESHOLD && cacheAge < STALE_THRESHOLD;
+    const hasFreshCache = (isFresh || isStale) && cachedMetrics.length > 0;
+    const needsBackgroundRefresh = isStale && cachedMetrics.length > 0;
 
     let ads;
     let dataSource: 'cache' | 'api' = 'api';
 
     if (hasFreshCache && nameMap.size > 0) {
       // ✅ CACHE HIT - Build ads from cached metrics
-      console.log(`[API] Ads Cache HIT - returning ${cachedMetrics.length} cached metrics (age: ${Math.round(cacheAge / 1000)}s)`);
+      const stateLabel = isFresh ? 'FRESH' : 'STALE';
+      console.log(`[API] Ads Cache HIT (${stateLabel}) - returning ${cachedMetrics.length} cached metrics (age: ${Math.round(cacheAge / 1000)}s)`);
+      recordCacheHit();
       dataSource = 'cache';
 
       // Aggregate metrics by ad (sum across date range)
@@ -230,20 +239,34 @@ export async function GET(request: NextRequest) {
 
       // 🔄 STALE-WHILE-REVALIDATE: Trigger background refresh if cache is getting old
       if (needsBackgroundRefresh) {
-        console.log(`[API] Ads Cache STALE - triggering background refresh`);
-        backgroundRefreshAds(
-          googleOAuthAccount.refresh_token!,
-          googleAdsAccount.id,
-          googleAdsAccount.googleAccountId,
+        console.log(`[API] Ads Cache STALE - enqueueing background refresh`);
+        recordStaleRefresh();
+
+        // Enqueue refresh job (queue handles dedupe, rate limiting, backoff)
+        enqueueAdRefresh({
+          refreshToken: googleOAuthAccount.refresh_token!,
+          accountId: googleAdsAccount.id,
+          customerId: googleAdsAccount.googleAccountId,
           adGroupId,
-          googleAdsAccount.parentManagerId || undefined,
+          parentManagerId: googleAdsAccount.parentManagerId || undefined,
           startDate,
-          endDate
-        ).catch(err => console.error('[API] Background refresh failed:', err));
+          endDate,
+        }).then(result => {
+          if (result === 'duplicate') {
+            console.log('[API] Ads refresh already pending, skipped enqueue');
+          } else if (result === 'rate-limited') {
+            console.log('[API] Customer rate-limited, skipped enqueue');
+          } else if (result === null) {
+            console.warn('[API] Queue unavailable - refresh deferred to next request');
+          } else {
+            console.log(`[API] Enqueued ads refresh job: ${result}`);
+          }
+        }).catch(err => console.error('[API] Failed to enqueue refresh:', err));
       }
     } else {
       // ❌ CACHE MISS - Fetch from Google Ads API
       console.log(`[API] Ads Cache MISS - fetching from Google Ads API`);
+      recordCacheMiss();
 
       ads = await fetchAds(
         googleOAuthAccount.refresh_token,
@@ -575,60 +598,4 @@ async function storeAdMetrics(
   }
 
   console.log(`[Cache] Stored ${ads.length} ads in MetricsFact`);
-}
-
-/**
- * Background refresh ads with lock protection
- * Fetches fresh data from Google Ads API and updates the cache
- */
-async function backgroundRefreshAds(
-  refreshToken: string,
-  accountId: string,
-  customerId: string,
-  adGroupId: string,
-  parentManagerId: string | undefined,
-  startDate: string,
-  endDate: string
-): Promise<void> {
-  const lockKey = createRefreshKey(customerId, 'AD', adGroupId, startDate, endDate);
-
-  // Try to acquire lock - if already refreshing, skip
-  if (!tryAcquireLock(lockKey)) {
-    return;
-  }
-
-  try {
-    console.log(`[Background] Starting ads refresh for ad group ${adGroupId}`);
-
-    // Fetch fresh data from Google Ads API
-    const ads = await fetchAds(
-      refreshToken,
-      customerId,
-      adGroupId,
-      startDate,
-      endDate,
-      parentManagerId
-    );
-
-    // Store in cache
-    await storeAdMetrics(accountId, customerId, adGroupId, ads, endDate);
-
-    console.log(`[Background] Completed ads refresh: ${ads.length} ads`);
-  } catch (error) {
-    const errorStr = String(error);
-
-    // Check for rate limit and set backoff
-    const retryMatch = errorStr.match(/Retry in (\d+) seconds/);
-    if (retryMatch) {
-      const retrySeconds = parseInt(retryMatch[1], 10);
-      setBackoff(lockKey, retrySeconds);
-      console.error(`[Background] Rate limited, backing off for ${retrySeconds}s`);
-    } else {
-      // For other errors, set a short backoff to prevent hammering
-      setBackoff(lockKey, 60);
-      console.error(`[Background] Refresh failed:`, error);
-    }
-  } finally {
-    releaseLock(lockKey);
-  }
 }
