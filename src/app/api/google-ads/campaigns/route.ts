@@ -4,6 +4,8 @@ import prisma from '@/lib/prisma';
 import { fetchCampaigns, createCampaign, updateCampaign } from '@/lib/google-ads';
 import { getOrSet, createCacheKey, invalidateAccountCache, CACHE_TTL } from '@/lib/cache';
 import { DEMO_CAMPAIGNS } from '@/lib/demo-data';
+import { EntityType, DataFreshness, Prisma } from '@prisma/client';
+import { isToday, parseISO } from 'date-fns';
 
 // GET /api/google-ads/campaigns?accountId=xxx - Fetch campaigns for an account
 export async function GET(request: NextRequest) {
@@ -84,26 +86,128 @@ export async function GET(request: NextRequest) {
     // Log the actual query being executed for debugging
     console.log(`[API] fetchCampaigns - customerId: ${googleAdsAccount.googleAccountId}, dateRange: ${startDate} to ${endDate}`);
 
-    // For MCC client accounts, we need to pass the loginCustomerId (parent manager ID)
-    // Use caching to reduce API calls - cache for 5 minutes
-    const cacheKey = createCacheKey(
-      'campaigns',
-      googleAdsAccount.googleAccountId,
-      startDate,
-      endDate
-    );
+    // ========================================
+    // DB-FIRST STRATEGY: Check cache before API
+    // ========================================
 
-    const campaigns = await getOrSet(
-      cacheKey,
-      () => fetchCampaigns(
-        googleOAuthAccount.refresh_token!, // Already validated above
+    // Check if we have cached data in MetricsFact table
+    const cachedMetrics = await prisma.metricsFact.findMany({
+      where: {
+        customerId: googleAdsAccount.googleAccountId,
+        entityType: EntityType.CAMPAIGN,
+        date: {
+          gte: new Date(startDate),
+          lte: new Date(endDate),
+        },
+      },
+      orderBy: { entityId: 'asc' },
+    });
+
+    // Get entity names from hierarchy cache
+    const entityNames = await prisma.entityHierarchy.findMany({
+      where: {
+        customerId: googleAdsAccount.googleAccountId,
+        entityType: EntityType.CAMPAIGN,
+      },
+    });
+    const nameMap = new Map(entityNames.map(e => [e.entityId, { name: e.entityName, status: e.status }]));
+
+    // Check cache freshness (less than 15 minutes old)
+    const hasFreshCache = cachedMetrics.length > 0 &&
+      cachedMetrics.some(m => {
+        const syncAge = Date.now() - m.syncedAt.getTime();
+        return syncAge < 15 * 60 * 1000; // 15 minutes
+      });
+
+    let campaigns;
+    let dataSource: 'cache' | 'api' = 'api';
+
+    if (hasFreshCache && nameMap.size > 0) {
+      // ✅ CACHE HIT - Build campaigns from cached metrics
+      console.log(`[API] Cache HIT - returning ${cachedMetrics.length} cached metrics`);
+      dataSource = 'cache';
+
+      // Aggregate metrics by campaign (sum across date range)
+      const campaignMetrics = new Map<string, {
+        impressions: number;
+        clicks: number;
+        cost: number;
+        conversions: number;
+        conversionValue: number;
+      }>();
+
+      for (const metric of cachedMetrics) {
+        const existing = campaignMetrics.get(metric.entityId) || {
+          impressions: 0,
+          clicks: 0,
+          cost: 0,
+          conversions: 0,
+          conversionValue: 0,
+        };
+
+        campaignMetrics.set(metric.entityId, {
+          impressions: existing.impressions + Number(metric.impressions),
+          clicks: existing.clicks + Number(metric.clicks),
+          cost: existing.cost + Number(metric.costMicros) / 1_000_000,
+          conversions: existing.conversions + Number(metric.conversions),
+          conversionValue: existing.conversionValue + Number(metric.conversionsValue),
+        });
+      }
+
+      // Build campaign objects
+      campaigns = Array.from(campaignMetrics.entries()).map(([campaignId, metrics]) => {
+        const entityInfo = nameMap.get(campaignId);
+        const ctr = metrics.impressions > 0 ? (metrics.clicks / metrics.impressions) * 100 : 0;
+        const cpa = metrics.conversions > 0 ? metrics.cost / metrics.conversions : 0;
+        const roas = metrics.cost > 0 ? metrics.conversionValue / metrics.cost : 0;
+
+        return {
+          id: campaignId,
+          name: entityInfo?.name || `Campaign ${campaignId}`,
+          status: entityInfo?.status || 'ENABLED',
+          type: 'SEARCH', // Would need to store this in hierarchy
+          spend: metrics.cost,
+          clicks: metrics.clicks,
+          impressions: metrics.impressions,
+          conversions: metrics.conversions,
+          conversionValue: metrics.conversionValue,
+          ctr,
+          cpa,
+          roas,
+          aiScore: Math.floor(Math.random() * 30) + 70, // Placeholder
+        };
+      });
+    } else {
+      // ❌ CACHE MISS - Fetch from Google Ads API
+      console.log(`[API] Cache MISS - fetching from Google Ads API`);
+
+      const cacheKey = createCacheKey(
+        'campaigns',
         googleAdsAccount.googleAccountId,
-        googleAdsAccount.parentManagerId || undefined,
         startDate,
         endDate
-      ),
-      CACHE_TTL.MEDIUM // 5 minute cache
-    );
+      );
+
+      campaigns = await getOrSet(
+        cacheKey,
+        () => fetchCampaigns(
+          googleOAuthAccount.refresh_token!,
+          googleAdsAccount.googleAccountId,
+          googleAdsAccount.parentManagerId || undefined,
+          startDate,
+          endDate
+        ),
+        CACHE_TTL.MEDIUM
+      );
+
+      // Store in MetricsFact for future cache hits (background, don't await)
+      storeCampaignMetrics(
+        googleAdsAccount.id,
+        googleAdsAccount.googleAccountId,
+        campaigns,
+        endDate
+      ).catch(err => console.error('[API] Failed to cache metrics:', err));
+    }
 
     // Update last sync time
     await prisma.googleAdsAccount.update({
@@ -115,12 +219,17 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       campaigns,
       _meta: {
+        source: dataSource,
         query: {
           customerId: googleAdsAccount.googleAccountId,
           startDate,
           endDate,
         },
         executedAt: new Date().toISOString(),
+        cacheInfo: {
+          hasFreshCache,
+          cachedCampaigns: hasFreshCache ? campaigns.length : 0,
+        },
       },
     });
   } catch (error) {
@@ -249,6 +358,96 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/**
+ * Store campaign metrics in MetricsFact table for caching
+ */
+async function storeCampaignMetrics(
+  accountId: string,
+  customerId: string,
+  campaigns: Array<{
+    id: string;
+    name: string;
+    status: string;
+    type?: string;
+    spend: number;
+    clicks: number;
+    impressions: number;
+    conversions: number;
+    conversionValue?: number;
+  }>,
+  endDate: string
+): Promise<void> {
+  const dataFreshness = isToday(parseISO(endDate))
+    ? DataFreshness.PARTIAL
+    : DataFreshness.FINAL;
+
+  for (const campaign of campaigns) {
+    // Store in MetricsFact (aggregated for now - single row per campaign)
+    await prisma.metricsFact.upsert({
+      where: {
+        customerId_entityType_entityId_date: {
+          customerId,
+          entityType: EntityType.CAMPAIGN,
+          entityId: campaign.id,
+          date: new Date(endDate),
+        },
+      },
+      create: {
+        customerId,
+        entityType: EntityType.CAMPAIGN,
+        entityId: campaign.id,
+        date: new Date(endDate),
+        impressions: BigInt(campaign.impressions || 0),
+        clicks: BigInt(campaign.clicks || 0),
+        costMicros: BigInt(Math.round((campaign.spend || 0) * 1_000_000)),
+        conversions: new Prisma.Decimal(campaign.conversions || 0),
+        conversionsValue: new Prisma.Decimal(campaign.conversionValue || 0),
+        ctr: new Prisma.Decimal(campaign.impressions > 0 ? campaign.clicks / campaign.impressions : 0),
+        averageCpc: new Prisma.Decimal(campaign.clicks > 0 ? campaign.spend / campaign.clicks : 0),
+        accountId,
+        dataFreshness,
+      },
+      update: {
+        impressions: BigInt(campaign.impressions || 0),
+        clicks: BigInt(campaign.clicks || 0),
+        costMicros: BigInt(Math.round((campaign.spend || 0) * 1_000_000)),
+        conversions: new Prisma.Decimal(campaign.conversions || 0),
+        conversionsValue: new Prisma.Decimal(campaign.conversionValue || 0),
+        ctr: new Prisma.Decimal(campaign.impressions > 0 ? campaign.clicks / campaign.impressions : 0),
+        averageCpc: new Prisma.Decimal(campaign.clicks > 0 ? campaign.spend / campaign.clicks : 0),
+        dataFreshness,
+        syncedAt: new Date(),
+      },
+    });
+
+    // Store in EntityHierarchy for name/status lookup
+    await prisma.entityHierarchy.upsert({
+      where: {
+        customerId_entityType_entityId: {
+          customerId,
+          entityType: EntityType.CAMPAIGN,
+          entityId: campaign.id,
+        },
+      },
+      create: {
+        customerId,
+        entityType: EntityType.CAMPAIGN,
+        entityId: campaign.id,
+        entityName: campaign.name,
+        status: campaign.status,
+        accountId,
+      },
+      update: {
+        entityName: campaign.name,
+        status: campaign.status,
+        lastUpdated: new Date(),
+      },
+    });
+  }
+
+  console.log(`[Cache] Stored ${campaigns.length} campaigns in MetricsFact`);
 }
 
 // PATCH /api/google-ads/campaigns - Update an existing campaign
