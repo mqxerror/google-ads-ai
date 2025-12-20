@@ -6,13 +6,14 @@ import { useCampaignsData } from '@/contexts/CampaignsDataContext';
 import { QueuedAction, getActionLabel, getRiskColor } from '@/types/action-queue';
 import { generateAITasks, getTaskStats, getTopTasks, getQuickWins } from '@/lib/ai/task-generator';
 import { formatCurrency, formatNumber, formatRelativeTime } from '@/lib/format';
+import DiagnosticsPanel from './DiagnosticsPanel';
 
 interface OpsCenterProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-type TabType = 'action_plan' | 'queue' | 'history';
+type TabType = 'action_plan' | 'queue' | 'history' | 'diagnostics';
 
 function ActionItem({ action, onApprove, onReject, onRemove, compact = false }: {
   action: QueuedAction;
@@ -133,6 +134,7 @@ export default function OpsCenter({ isOpen, onClose }: OpsCenterProps) {
     { id: 'action_plan' as const, label: 'AI Action Plan', count: taskStats.total },
     { id: 'queue' as const, label: 'Queue', count: pendingCount + approvedCount },
     { id: 'history' as const, label: 'History', count: completedActions.length },
+    { id: 'diagnostics' as const, label: 'Diagnostics', count: 0 },
   ];
 
   return (
@@ -465,6 +467,11 @@ export default function OpsCenter({ isOpen, onClose }: OpsCenterProps) {
                 </div>
               )}
             </div>
+          )}
+
+          {/* Diagnostics Tab */}
+          {activeTab === 'diagnostics' && (
+            <DiagnosticsPanel />
           )}
         </div>
 

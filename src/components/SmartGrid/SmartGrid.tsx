@@ -803,6 +803,20 @@ export default function SmartGrid() {
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
+          {/* Freshness indicator - visible in header */}
+          {cacheMeta && currentLevel === 'campaigns' && (
+            <DataFreshnessIndicator
+              lastUpdated={cacheMeta.lastSyncedAt}
+              isRefreshing={cacheMeta.refreshing || (isLoading && campaigns.length > 0)}
+              cacheState={
+                cacheMeta.ageSeconds === null ? 'unknown' :
+                cacheMeta.ageSeconds < 300 ? 'fresh' :
+                cacheMeta.ageSeconds < 3600 ? 'stale' :
+                'expired'
+              }
+              compact
+            />
+          )}
           <DateRangePicker value={dateRange} onChange={setDateRange} />
           {currentLevel === 'campaigns' && (
             <button
@@ -946,8 +960,9 @@ export default function SmartGrid() {
                 isRefreshing={cacheMeta.refreshing || (isLoading && campaigns.length > 0)}
                 cacheState={
                   cacheMeta.ageSeconds === null ? 'unknown' :
-                  cacheMeta.ageSeconds < 300 ? 'fresh' :
-                  cacheMeta.ageSeconds < 86400 ? 'stale' : 'expired'
+                  cacheMeta.ageSeconds < 300 ? 'fresh' :    // <5 min
+                  cacheMeta.ageSeconds < 3600 ? 'stale' :   // <1 hour
+                  'expired'                                  // >1 hour
                 }
                 compact
               />
