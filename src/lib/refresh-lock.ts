@@ -351,3 +351,182 @@ export const CACHE_TTL = {
   STALE: 24 * 60 * 60 * 1000,  // 24 hours - still usable, trigger background refresh
   EXPIRED: 7 * 24 * 60 * 60 * 1000, // 7 days - hard expiry, force refresh
 };
+
+// ============================================
+// Blocking Fetch Protection
+// ============================================
+
+// Track blocking fetches to prevent traffic spikes from hammering quota
+const blockingFetchLocks = new Map<string, number>();
+const BLOCKING_FETCH_COOLDOWN = 60 * 1000; // 1 minute between blocking fetches per key
+const BLOCKING_FETCH_TIMEOUT = 12000; // 12 second hard timeout
+
+/**
+ * Check if we can perform a blocking fetch for this key
+ * Returns true if allowed, false if throttled
+ */
+export function canBlockingFetch(key: string): boolean {
+  const lastFetch = blockingFetchLocks.get(key);
+  if (!lastFetch) return true;
+
+  const elapsed = Date.now() - lastFetch;
+  if (elapsed >= BLOCKING_FETCH_COOLDOWN) {
+    return true;
+  }
+
+  console.log(`[BlockingFetch] Throttled: ${key} (${Math.round((BLOCKING_FETCH_COOLDOWN - elapsed) / 1000)}s remaining)`);
+  return false;
+}
+
+/**
+ * Mark that a blocking fetch is starting for this key
+ */
+export function startBlockingFetch(key: string): void {
+  blockingFetchLocks.set(key, Date.now());
+}
+
+/**
+ * Get the blocking fetch timeout in milliseconds
+ */
+export function getBlockingFetchTimeout(): number {
+  return BLOCKING_FETCH_TIMEOUT;
+}
+
+/**
+ * Wrapper for blocking fetch with timeout protection
+ * Returns the result or throws with a user-friendly error
+ */
+export async function withBlockingFetchTimeout<T>(
+  key: string,
+  fetchFn: () => Promise<T>,
+  customTimeout?: number
+): Promise<T> {
+  const timeout = customTimeout || BLOCKING_FETCH_TIMEOUT;
+
+  // Check throttle first
+  if (!canBlockingFetch(key)) {
+    throw new Error('THROTTLED: Too many requests. Please wait a moment and try again.');
+  }
+
+  // Mark fetch started
+  startBlockingFetch(key);
+
+  // Race against timeout
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error('TIMEOUT: Google Ads is responding slowly. Please try again in a moment.'));
+    }, timeout);
+  });
+
+  try {
+    return await Promise.race([fetchFn(), timeoutPromise]);
+  } catch (error) {
+    // Clear the lock on error so user can retry
+    blockingFetchLocks.delete(key);
+    throw error;
+  }
+}
+
+/**
+ * Get blocking fetch status for debugging
+ */
+export function getBlockingFetchStatus(): Array<{ key: string; cooldownRemaining: number }> {
+  const now = Date.now();
+  const result: Array<{ key: string; cooldownRemaining: number }> = [];
+
+  for (const [key, timestamp] of blockingFetchLocks.entries()) {
+    const remaining = BLOCKING_FETCH_COOLDOWN - (now - timestamp);
+    if (remaining > 0) {
+      result.push({ key, cooldownRemaining: remaining });
+    } else {
+      blockingFetchLocks.delete(key);
+    }
+  }
+
+  return result;
+}
+
+// ============================================
+// Cache Inspector Helpers
+// ============================================
+
+export interface CacheInspectorResult {
+  key: string;
+  exists: boolean;
+  age: number | null;
+  state: 'fresh' | 'stale' | 'expired' | 'missing';
+  lastUpdatedAt: string | null;
+  refreshRunning: boolean;
+  refreshAge: number | null;
+  inBackoff: boolean;
+  backoffRemaining: number | null;
+  blockingFetchThrottled: boolean;
+  blockingFetchCooldown: number | null;
+}
+
+/**
+ * Inspect cache state for a given key
+ * Note: This requires the caller to pass in cache data from DB
+ */
+export function inspectCacheKey(
+  key: string,
+  cacheData?: { updatedAt: Date } | null
+): CacheInspectorResult {
+  const now = Date.now();
+
+  // Calculate age and state from DB cache data
+  let age: number | null = null;
+  let state: 'fresh' | 'stale' | 'expired' | 'missing' = 'missing';
+  let lastUpdatedAt: string | null = null;
+
+  if (cacheData) {
+    age = now - cacheData.updatedAt.getTime();
+    lastUpdatedAt = cacheData.updatedAt.toISOString();
+
+    if (age < CACHE_TTL.FRESH) {
+      state = 'fresh';
+    } else if (age < CACHE_TTL.STALE) {
+      state = 'stale';
+    } else {
+      state = 'expired';
+    }
+  }
+
+  // Check refresh status
+  const refreshRunning = isRefreshing(key);
+  const refreshAge = getRefreshAge(key);
+
+  // Check backoff
+  const inBackoff = isInBackoff(key);
+  let backoffRemaining: number | null = null;
+  const keyBackoff = backoffUntil.get(key);
+  if (keyBackoff && now < keyBackoff) {
+    backoffRemaining = keyBackoff - now;
+  }
+
+  // Check blocking fetch throttle
+  const lastBlockingFetch = blockingFetchLocks.get(key);
+  let blockingFetchThrottled = false;
+  let blockingFetchCooldown: number | null = null;
+  if (lastBlockingFetch) {
+    const elapsed = now - lastBlockingFetch;
+    if (elapsed < BLOCKING_FETCH_COOLDOWN) {
+      blockingFetchThrottled = true;
+      blockingFetchCooldown = BLOCKING_FETCH_COOLDOWN - elapsed;
+    }
+  }
+
+  return {
+    key,
+    exists: cacheData !== null && cacheData !== undefined,
+    age,
+    state,
+    lastUpdatedAt,
+    refreshRunning,
+    refreshAge,
+    inBackoff,
+    backoffRemaining,
+    blockingFetchThrottled,
+    blockingFetchCooldown,
+  };
+}

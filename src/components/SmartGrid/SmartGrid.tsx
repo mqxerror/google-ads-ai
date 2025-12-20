@@ -34,6 +34,15 @@ import { useCampaignsData } from '@/contexts/CampaignsDataContext';
 import { CampaignEditor } from '@/components/CampaignEditor';
 import { BudgetManager } from '@/components/BudgetManager';
 import { BudgetReallocationModal } from '@/components/BudgetOptimizer';
+import DataFreshnessIndicator from '@/components/ui/DataFreshnessIndicator';
+
+// Cache metadata type from API response
+interface CacheMeta {
+  source: 'cache' | 'api';
+  ageSeconds: number | null;
+  lastSyncedAt: string | null;
+  refreshing: boolean;
+}
 
 // Type for pending action before guardrail check - reuse the exported type from guardrails
 type PendingActionData = ActionWithAIScore;
@@ -110,6 +119,9 @@ export default function SmartGrid() {
   const [isAIDockOpen, setIsAIDockOpen] = useState(false);
   const [dockCampaign, setDockCampaign] = useState<Campaign | null>(null);
   const [dockIssue, setDockIssue] = useState<CampaignIssue | null>(null);
+
+  // Cache metadata for freshness indicator
+  const [cacheMeta, setCacheMeta] = useState<CacheMeta | null>(null);
 
   // Fix Panel state - docked panel for reviewing fixes
   const [isFixPanelOpen, setIsFixPanelOpen] = useState(false);
@@ -249,6 +261,16 @@ export default function SmartGrid() {
 
         const data = await response.json();
         setCampaigns(data.campaigns || []);
+
+        // Extract cache metadata if present
+        if (data._meta) {
+          setCacheMeta({
+            source: data._meta.source,
+            ageSeconds: data._meta.ageSeconds,
+            lastSyncedAt: data._meta.lastSyncedAt,
+            refreshing: data._meta.refreshing,
+          });
+        }
       } catch (err) {
         console.error('Error fetching campaigns:', err);
         setError(err instanceof Error ? err.message : 'Failed to fetch campaigns');
@@ -916,6 +938,19 @@ export default function SmartGrid() {
               <span className="font-semibold text-[var(--accent)]">
                 ({selectedIds.size} selected)
               </span>
+            )}
+            {/* Data Freshness Indicator */}
+            {cacheMeta && (
+              <DataFreshnessIndicator
+                lastUpdated={cacheMeta.lastSyncedAt}
+                isRefreshing={cacheMeta.refreshing || (isLoading && campaigns.length > 0)}
+                cacheState={
+                  cacheMeta.ageSeconds === null ? 'unknown' :
+                  cacheMeta.ageSeconds < 300 ? 'fresh' :
+                  cacheMeta.ageSeconds < 86400 ? 'stale' : 'expired'
+                }
+                compact
+              />
             )}
           </div>
           <div className="flex items-center gap-6 text-[var(--text2)]">

@@ -65,6 +65,7 @@ export default function QueueMonitor() {
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [opsToken, setOpsToken] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -263,35 +264,63 @@ export default function QueueMonitor() {
         </div>
       </div>
 
-      {/* Queue Controls */}
-      <div className="bg-white rounded-lg p-4 border border-gray-200">
-        <div className="text-sm font-medium text-gray-700 mb-3">Queue Controls</div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleAction('pause')}
-            disabled={actionLoading !== null}
-            className="px-4 py-2 bg-yellow-100 text-yellow-800 text-sm rounded hover:bg-yellow-200 disabled:opacity-50"
+      {/* Queue Controls - Behind Advanced Toggle */}
+      <div className="bg-white rounded-lg border border-gray-200">
+        <button
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-gray-50"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-gray-700">Advanced Controls</span>
+            <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded">
+              Destructive
+            </span>
+          </div>
+          <svg
+            className={`w-5 h-5 text-gray-400 transition-transform ${showAdvanced ? 'rotate-180' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
           >
-            {actionLoading === 'pause' ? 'Pausing...' : 'Pause'}
-          </button>
-          <button
-            onClick={() => handleAction('resume')}
-            disabled={actionLoading !== null}
-            className="px-4 py-2 bg-green-100 text-green-800 text-sm rounded hover:bg-green-200 disabled:opacity-50"
-          >
-            {actionLoading === 'resume' ? 'Resuming...' : 'Resume'}
-          </button>
-          <button
-            onClick={() => handleAction('drain')}
-            disabled={actionLoading !== null}
-            className="px-4 py-2 bg-red-100 text-red-800 text-sm rounded hover:bg-red-200 disabled:opacity-50"
-          >
-            {actionLoading === 'drain' ? 'Draining...' : 'Drain All'}
-          </button>
-        </div>
-        <p className="text-xs text-gray-500 mt-2">
-          Destructive actions require OPS_TOKEN in production.
-        </p>
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {showAdvanced && (
+          <div className="px-4 pb-4 pt-2 border-t border-gray-100">
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
+              <p className="text-xs text-yellow-800">
+                These controls affect the background job queue. Use with caution in production.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleAction('pause')}
+                disabled={actionLoading !== null}
+                className="px-4 py-2 bg-yellow-100 text-yellow-800 text-sm rounded hover:bg-yellow-200 disabled:opacity-50"
+              >
+                {actionLoading === 'pause' ? 'Pausing...' : 'Pause Queue'}
+              </button>
+              <button
+                onClick={() => handleAction('resume')}
+                disabled={actionLoading !== null}
+                className="px-4 py-2 bg-green-100 text-green-800 text-sm rounded hover:bg-green-200 disabled:opacity-50"
+              >
+                {actionLoading === 'resume' ? 'Resuming...' : 'Resume Queue'}
+              </button>
+              <button
+                onClick={() => handleAction('drain')}
+                disabled={actionLoading !== null}
+                className="px-4 py-2 bg-red-100 text-red-800 text-sm rounded hover:bg-red-200 disabled:opacity-50"
+              >
+                {actionLoading === 'drain' ? 'Draining...' : 'Drain All Jobs'}
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Requires OPS_TOKEN header in production.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Two Column Layout */}
