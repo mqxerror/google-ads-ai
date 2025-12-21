@@ -1,7 +1,11 @@
+// Force Node.js runtime (not Edge) for Prisma compatibility
+export const runtime = 'nodejs';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { fetchAdGroups } from '@/lib/google-ads';
+import { fetchAdGroups, fetchAdGroupsDaily } from '@/lib/google-ads';
+import { storeDailyMetrics } from '@/lib/cache/metrics-storage';
 import { DEMO_AD_GROUPS } from '@/lib/demo-data';
 import { EntityType, DataFreshness, Prisma } from '@prisma/client';
 import { isToday, parseISO } from 'date-fns';
@@ -14,6 +18,13 @@ import {
   CACHE_TTL,
 } from '@/lib/refresh-lock';
 import { enqueueAdGroupRefresh } from '@/lib/queue';
+import {
+  buildQueryContext,
+  buildQueryMeta,
+  createQueryCacheKey,
+  extractDatesFromMetrics,
+  validateQueryContext,
+} from '@/lib/query-context';
 
 // GET /api/google-ads/ad-groups?accountId=xxx&campaignId=xxx&startDate=xxx&endDate=xxx - Fetch ad groups for a campaign
 export async function GET(request: NextRequest) {
@@ -28,6 +39,15 @@ export async function GET(request: NextRequest) {
   const campaignId = searchParams.get('campaignId');
   const startDate = searchParams.get('startDate');
   const endDate = searchParams.get('endDate');
+
+  // Additional query modifiers for query context
+  const preset = searchParams.get('preset') || undefined;
+  const timezone = searchParams.get('timezone') || 'UTC';
+  const includeToday = searchParams.get('includeToday') !== 'false';
+  const conversionMode = (searchParams.get('conversionMode') || 'default') as
+    | 'default'
+    | 'by_conversion_time'
+    | 'by_click_time';
 
   if (!accountId) {
     return NextResponse.json({ error: 'accountId is required' }, { status: 400 });
@@ -223,8 +243,9 @@ export async function GET(request: NextRequest) {
       console.log(`[API] Ad Groups Cache MISS - fetching from Google Ads API`);
       recordCacheMiss();
 
-      adGroups = await fetchAdGroups(
-        googleOAuthAccount.refresh_token,
+      // Fetch per-day data for proper caching (includes segments.date in SELECT)
+      const dailyData = await fetchAdGroupsDaily(
+        googleOAuthAccount.refresh_token!,
         googleAdsAccount.googleAccountId,
         campaignId,
         startDate,
@@ -232,14 +253,115 @@ export async function GET(request: NextRequest) {
         googleAdsAccount.parentManagerId || undefined
       );
 
-      // Store in MetricsFact for future cache hits (background, don't await)
-      storeAdGroupMetrics(
-        googleAdsAccount.id,
+      // Store per-day rows in MetricsFact (CRITICAL: only per-day data allowed)
+      storeDailyMetrics(
         googleAdsAccount.googleAccountId,
-        campaignId,
-        adGroups,
-        endDate
-      ).catch(err => console.error('[API] Failed to cache ad group metrics:', err));
+        googleAdsAccount.id,
+        EntityType.AD_GROUP,
+        dailyData.map(row => ({
+          date: row.date,
+          entityId: row.adGroupId,
+          entityName: row.adGroupName,
+          entityStatus: row.adGroupStatus,
+          impressions: row.impressions,
+          clicks: row.clicks,
+          costMicros: row.costMicros,
+          conversions: row.conversions,
+          conversionsValue: 0,
+        }))
+      ).then(result => {
+        console.log(`[API] Stored ${result.rowsWritten} daily ad group rows (${result.datesWritten.join(', ')})`);
+      }).catch(err => console.error('[API] Failed to cache daily ad group metrics:', err));
+
+      // Also update EntityHierarchy for name/status lookups
+      const uniqueAdGroups = new Map<string, { name: string; status: string }>();
+      for (const row of dailyData) {
+        if (!uniqueAdGroups.has(row.adGroupId)) {
+          uniqueAdGroups.set(row.adGroupId, {
+            name: row.adGroupName,
+            status: row.adGroupStatus,
+          });
+        }
+      }
+
+      // Store hierarchy entries (background)
+      Promise.all(
+        Array.from(uniqueAdGroups.entries()).map(([adGroupId, info]) =>
+          prisma.entityHierarchy.upsert({
+            where: {
+              customerId_entityType_entityId: {
+                customerId: googleAdsAccount.googleAccountId,
+                entityType: EntityType.AD_GROUP,
+                entityId: adGroupId,
+              },
+            },
+            create: {
+              customerId: googleAdsAccount.googleAccountId,
+              entityType: EntityType.AD_GROUP,
+              entityId: adGroupId,
+              entityName: info.name,
+              status: info.status,
+              parentEntityType: EntityType.CAMPAIGN,
+              parentEntityId: campaignId,
+              accountId: googleAdsAccount.id,
+            },
+            update: {
+              entityName: info.name,
+              status: info.status,
+              parentEntityId: campaignId,
+              lastUpdated: new Date(),
+            },
+          })
+        )
+      ).catch(err => console.error('[API] Failed to update ad group hierarchy:', err));
+
+      // Aggregate daily data to build ad group response
+      const adGroupMetrics = new Map<string, {
+        name: string;
+        status: string;
+        impressions: number;
+        clicks: number;
+        cost: number;
+        conversions: number;
+      }>();
+
+      for (const row of dailyData) {
+        const existing = adGroupMetrics.get(row.adGroupId) || {
+          name: row.adGroupName,
+          status: row.adGroupStatus,
+          impressions: 0,
+          clicks: 0,
+          cost: 0,
+          conversions: 0,
+        };
+
+        adGroupMetrics.set(row.adGroupId, {
+          ...existing,
+          impressions: existing.impressions + row.impressions,
+          clicks: existing.clicks + row.clicks,
+          cost: existing.cost + row.costMicros / 1_000_000,
+          conversions: existing.conversions + row.conversions,
+        });
+      }
+
+      // Build ad group objects
+      adGroups = Array.from(adGroupMetrics.entries()).map(([adGroupId, metrics]) => {
+        const ctr = metrics.impressions > 0 ? (metrics.clicks / metrics.impressions) * 100 : 0;
+        const cpa = metrics.conversions > 0 ? metrics.cost / metrics.conversions : 0;
+
+        return {
+          id: adGroupId,
+          campaignId,
+          name: metrics.name,
+          status: metrics.status,
+          spend: metrics.cost,
+          clicks: metrics.clicks,
+          impressions: metrics.impressions,
+          conversions: metrics.conversions,
+          ctr,
+          cpa,
+        };
+      });
     }
 
     // Check if a background refresh is in progress
@@ -257,10 +379,47 @@ export async function GET(request: NextRequest) {
       ? new Date(Math.min(...cachedMetrics.map(m => m.syncedAt.getTime())))
       : null;
 
+    // Build query context for date range correctness
+    const queryContext = buildQueryContext(startDate, endDate, {
+      timezone,
+      includeToday,
+      conversionMode,
+      requestedPreset: preset,
+    });
+
+    // Validate query context (catches Yesterday != 1-day bugs)
+    const validation = validateQueryContext(queryContext);
+    if (!validation.valid) {
+      console.warn(`[API] AdGroups query context validation failed: ${validation.error}`);
+    }
+
+    // Extract actual dates from cached metrics
+    const actualDates = extractDatesFromMetrics(cachedMetrics);
+
+    // Build comprehensive cache key
+    const fullCacheKey = createQueryCacheKey({
+      customerId: googleAdsAccount.googleAccountId,
+      entityType: 'AD_GROUP',
+      startDate,
+      endDate,
+      timezone,
+      conversionMode,
+      includeToday,
+      parentEntityId: campaignId,
+    });
+
+    // Build query meta with date coverage analysis
+    const queryMeta = buildQueryMeta(queryContext, actualDates, dataSource, fullCacheKey);
+
     // Return data with comprehensive metadata
     return NextResponse.json({
       adGroups,
       _meta: {
+        queryContext: queryMeta.queryContext,
+        datesCovered: queryMeta.datesCovered,
+        missingDays: queryMeta.missingDays,
+        warnings: queryMeta.warnings,
+        cacheKey: fullCacheKey,
         source: dataSource,
         ageSeconds: cacheAge === Infinity ? null : Math.round(cacheAge / 1000),
         lastSyncedAt: oldestSyncDate?.toISOString() || null,
@@ -283,96 +442,3 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/**
- * Store ad group metrics in MetricsFact table for caching
- */
-async function storeAdGroupMetrics(
-  accountId: string,
-  customerId: string,
-  campaignId: string,
-  adGroups: Array<{
-    id: string;
-    name: string;
-    status: string;
-    spend: number;
-    clicks: number;
-    impressions: number;
-    conversions: number;
-  }>,
-  endDate: string
-): Promise<void> {
-  const dataFreshness = isToday(parseISO(endDate))
-    ? DataFreshness.PARTIAL
-    : DataFreshness.FINAL;
-
-  for (const adGroup of adGroups) {
-    // Store in MetricsFact
-    await prisma.metricsFact.upsert({
-      where: {
-        customerId_entityType_entityId_date: {
-          customerId,
-          entityType: EntityType.AD_GROUP,
-          entityId: adGroup.id,
-          date: new Date(endDate),
-        },
-      },
-      create: {
-        customerId,
-        entityType: EntityType.AD_GROUP,
-        entityId: adGroup.id,
-        parentEntityType: EntityType.CAMPAIGN,
-        parentEntityId: campaignId,
-        date: new Date(endDate),
-        impressions: BigInt(adGroup.impressions || 0),
-        clicks: BigInt(adGroup.clicks || 0),
-        costMicros: BigInt(Math.round((adGroup.spend || 0) * 1_000_000)),
-        conversions: new Prisma.Decimal(adGroup.conversions || 0),
-        conversionsValue: new Prisma.Decimal(0),
-        ctr: new Prisma.Decimal(adGroup.impressions > 0 ? adGroup.clicks / adGroup.impressions : 0),
-        averageCpc: new Prisma.Decimal(adGroup.clicks > 0 ? adGroup.spend / adGroup.clicks : 0),
-        accountId,
-        dataFreshness,
-      },
-      update: {
-        parentEntityId: campaignId,
-        impressions: BigInt(adGroup.impressions || 0),
-        clicks: BigInt(adGroup.clicks || 0),
-        costMicros: BigInt(Math.round((adGroup.spend || 0) * 1_000_000)),
-        conversions: new Prisma.Decimal(adGroup.conversions || 0),
-        ctr: new Prisma.Decimal(adGroup.impressions > 0 ? adGroup.clicks / adGroup.impressions : 0),
-        averageCpc: new Prisma.Decimal(adGroup.clicks > 0 ? adGroup.spend / adGroup.clicks : 0),
-        dataFreshness,
-        syncedAt: new Date(),
-      },
-    });
-
-    // Store in EntityHierarchy for name/status lookup
-    await prisma.entityHierarchy.upsert({
-      where: {
-        customerId_entityType_entityId: {
-          customerId,
-          entityType: EntityType.AD_GROUP,
-          entityId: adGroup.id,
-        },
-      },
-      create: {
-        customerId,
-        entityType: EntityType.AD_GROUP,
-        entityId: adGroup.id,
-        entityName: adGroup.name,
-        status: adGroup.status,
-        parentEntityType: EntityType.CAMPAIGN,
-        parentEntityId: campaignId,
-        accountId,
-      },
-      update: {
-        entityName: adGroup.name,
-        status: adGroup.status,
-        parentEntityId: campaignId,
-        lastUpdated: new Date(),
-      },
-    });
-  }
-
-  console.log(`[Cache] Stored ${adGroups.length} ad groups in MetricsFact`);
-}

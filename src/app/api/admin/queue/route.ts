@@ -10,6 +10,9 @@
  * - POST actions (pause/resume/drain) require both in production
  */
 
+// Force Node.js runtime (not Edge) for Prisma compatibility
+export const runtime = 'nodejs';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import {

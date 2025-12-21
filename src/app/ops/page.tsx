@@ -3,11 +3,12 @@
 import { OpsWorkbench } from '@/components/OpsWorkbench';
 import { QueueMonitor } from '@/components/QueueMonitor';
 import { CacheInspector } from '@/components/CacheInspector';
+import SystemStatus from '@/components/OpsCenter/SystemStatus';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
 import { useState, useEffect } from 'react';
 
-type OpsTab = 'actions' | 'queue' | 'cache';
+type OpsTab = 'actions' | 'queue' | 'cache' | 'system';
 
 // Environment detection
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
@@ -95,6 +96,16 @@ export default function OpsPage() {
             >
               Cache Inspector
             </button>
+            <button
+              onClick={() => setActiveTab('system')}
+              className={`py-3 px-1 border-b-2 text-sm font-medium transition-colors ${
+                activeTab === 'system'
+                  ? 'border-indigo-600 text-indigo-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              System
+            </button>
           </nav>
         </div>
 
@@ -103,6 +114,7 @@ export default function OpsPage() {
           {activeTab === 'actions' && <OpsWorkbench />}
           {activeTab === 'queue' && <QueueMonitor />}
           {activeTab === 'cache' && <CacheInspector />}
+          {activeTab === 'system' && <SystemStatus />}
         </main>
       </div>
     </div>

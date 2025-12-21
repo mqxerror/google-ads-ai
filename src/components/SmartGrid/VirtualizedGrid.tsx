@@ -52,6 +52,10 @@ export interface VirtualizedGridProps {
    */
   onIssueClick?: (campaign: Campaign, issue: CampaignIssue) => void;
   /**
+   * Last synced timestamp for freshness display
+   */
+  lastSyncedAt?: string | null;
+  /**
    * Height of each row in pixels
    */
   rowHeight?: number;
@@ -82,6 +86,7 @@ export default function VirtualizedGrid({
   onManageBudget,
   onUpdateCampaign,
   onIssueClick,
+  lastSyncedAt,
   rowHeight = 56, // Apple-style 56px row height
   height = 600,
   overscanCount = 5,
@@ -204,6 +209,7 @@ export default function VirtualizedGrid({
                         ? (campaign, issue) => onIssueClick(campaign, issue)
                         : undefined
                     }
+                    lastSyncedAt={lastSyncedAt}
                   />
                 ))}
               </tbody>

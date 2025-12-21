@@ -84,6 +84,11 @@ export default function GridHeader({ sortConfig, onSort, allSelected, onSelectAl
         <th scope="col" className="px-4 py-3 text-left min-w-[200px]">
           Issue
         </th>
+
+        {/* Last Synced column - no sorting */}
+        <th scope="col" className="px-4 py-3 text-right w-24">
+          Synced
+        </th>
       </tr>
     </thead>
   );

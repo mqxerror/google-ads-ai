@@ -36,6 +36,7 @@ export default function AdGroupsGrid() {
   const [error, setError] = useState<string | null>(null);
   const [isAdEditorOpen, setIsAdEditorOpen] = useState(false);
   const [selectedAdGroupId, setSelectedAdGroupId] = useState<string | null>(null);
+  const [dataSource, setDataSource] = useState<'cache' | 'api' | null>(null);
 
   useEffect(() => {
     if (!currentAccount?.id || !selectedCampaign?.id) {
@@ -48,6 +49,7 @@ export default function AdGroupsGrid() {
       try {
         setIsLoading(true);
         setError(null);
+        setDataSource(null);
         // Include date range for consistent metrics across all entity levels
         const params = new URLSearchParams({
           accountId: currentAccount.id,
@@ -64,6 +66,8 @@ export default function AdGroupsGrid() {
 
         const data = await response.json();
         setAdGroups(data.adGroups || []);
+        // Track data source for UI hint
+        setDataSource(data._meta?.source || 'api');
       } catch (err) {
         console.error('Error fetching ad groups:', err);
         setError(err instanceof Error ? err.message : 'Failed to fetch ad groups');
@@ -112,7 +116,20 @@ export default function AdGroupsGrid() {
   const isInitialLoad = isLoading && adGroups.length === 0;
 
   if (isInitialLoad) {
-    return <GridSkeleton />;
+    return (
+      <div className="relative">
+        {/* Warming hint - shown during cold cache load */}
+        <div className="flex items-center justify-center gap-2 py-3 bg-amber-50 border-b border-amber-100">
+          <svg className="w-4 h-4 text-amber-600 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+          <span className="text-sm text-amber-700">Warming drill-down cache...</span>
+          <span className="text-xs text-amber-500">(first load is slower)</span>
+        </div>
+        <GridSkeleton />
+      </div>
+    );
   }
 
   if (error) {

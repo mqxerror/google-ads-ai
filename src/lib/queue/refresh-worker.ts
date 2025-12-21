@@ -10,8 +10,9 @@
  */
 
 import { Worker, Job, UnrecoverableError } from 'bullmq';
-import { getRedisOptions } from './redis';
+import { getRedisOptions, updateWorkerHeartbeat } from './redis';
 import { RefreshJobData, RefreshJobResult, generateJobId } from './refresh-queue';
+import { v4 as uuidv4 } from 'uuid';
 import prisma from '../prisma';
 import {
   fetchCampaigns,
@@ -22,11 +23,19 @@ import {
 } from '../google-ads';
 import { EntityType, DataFreshness, Prisma } from '@prisma/client';
 import { isToday, parseISO } from 'date-fns';
+import { validateCampaignHierarchy } from '../validation/hierarchy-validation';
+import { markJobRunning, markJobCompleted, markJobFailed } from '../cache/smart-prewarm';
+
+// Post-refresh validation sampling rate
+const POST_REFRESH_VALIDATION_SAMPLE_RATE = 0.10; // 10% of refresh jobs
 
 const QUEUE_NAME = 'gads-refresh';
 
 // Worker instance
 let refreshWorker: Worker<RefreshJobData, RefreshJobResult> | null = null;
+let heartbeatInterval: NodeJS.Timeout | null = null;
+let workerId: string = '';
+let jobsProcessed = 0;
 
 // ============================================
 // Backoff with Jitter
@@ -124,6 +133,10 @@ export async function startRefreshWorker(): Promise<void> {
     return;
   }
 
+  // Generate unique worker ID
+  workerId = `worker-${uuidv4().slice(0, 8)}`;
+  jobsProcessed = 0;
+
   const connection = getRedisOptions();
 
   refreshWorker = new Worker<RefreshJobData, RefreshJobResult>(
@@ -141,21 +154,40 @@ export async function startRefreshWorker(): Promise<void> {
   );
 
   refreshWorker.on('completed', (job, result) => {
+    jobsProcessed++;
     console.log(`[Worker] ✓ ${job.data.type} completed: ${result.entityCount} entities in ${result.duration}ms`);
+    // Update heartbeat after each job
+    updateWorkerHeartbeat(workerId, jobsProcessed).catch(() => {});
   });
 
   refreshWorker.on('failed', (job, err) => {
     console.error(`[Worker] ✗ ${job?.data.type} failed:`, err.message);
+    // Update heartbeat even on failure
+    updateWorkerHeartbeat(workerId, jobsProcessed).catch(() => {});
   });
 
   refreshWorker.on('error', (err) => {
     console.error('[Worker] Error:', err);
   });
 
-  console.log('[Worker] Started');
+  // Start heartbeat interval (every 15 seconds)
+  heartbeatInterval = setInterval(() => {
+    updateWorkerHeartbeat(workerId, jobsProcessed).catch(() => {});
+  }, 15000);
+
+  // Initial heartbeat
+  await updateWorkerHeartbeat(workerId, jobsProcessed);
+
+  console.log(`[Worker] Started with ID: ${workerId}`);
 }
 
 export async function stopRefreshWorker(): Promise<void> {
+  // Stop heartbeat interval
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+
   if (refreshWorker) {
     await refreshWorker.close();
     refreshWorker = null;
@@ -279,6 +311,30 @@ async function refreshCampaigns(data: RefreshJobData): Promise<number> {
     data: { lastSyncAt: new Date() },
   });
 
+  // Run sampled hierarchy validation after refresh (10% of jobs)
+  // This catches sync issues early, before users see discrepancies
+  if (Math.random() < POST_REFRESH_VALIDATION_SAMPLE_RATE) {
+    try {
+      const validation = await validateCampaignHierarchy(
+        data.customerId,
+        data.startDate,
+        data.endDate,
+        0.05, // 5% tolerance
+        'refresh' // Trigger type for persistence
+      );
+
+      if (validation.mismatches.length > 0) {
+        console.warn(
+          `[Worker] Post-refresh validation found ${validation.mismatches.length} mismatches ` +
+          `for ${data.customerId} (persisted: ${validation.persistedEvents})`
+        );
+      }
+    } catch (err) {
+      // Don't fail the job if validation fails
+      console.warn('[Worker] Post-refresh validation error:', err);
+    }
+  }
+
   return campaigns.length;
 }
 
@@ -287,24 +343,36 @@ async function refreshAdGroups(data: RefreshJobData): Promise<number> {
     throw new Error('parentEntityId (campaignId) required');
   }
 
-  const adGroups = await fetchAdGroups(
-    data.refreshToken,
-    data.customerId,
-    data.parentEntityId,
-    data.startDate,
-    data.endDate,
-    data.parentManagerId
-  );
+  // Track prewarm progress: mark job as running
+  markJobRunning(data.customerId, data.parentEntityId);
 
-  await storeAdGroupMetrics(
-    data.accountId,
-    data.customerId,
-    data.parentEntityId,
-    adGroups,
-    data.endDate
-  );
+  try {
+    const adGroups = await fetchAdGroups(
+      data.refreshToken,
+      data.customerId,
+      data.parentEntityId,
+      data.startDate,
+      data.endDate,
+      data.parentManagerId
+    );
 
-  return adGroups.length;
+    await storeAdGroupMetrics(
+      data.accountId,
+      data.customerId,
+      data.parentEntityId,
+      adGroups,
+      data.endDate
+    );
+
+    // Track prewarm progress: mark job as completed
+    markJobCompleted(data.customerId, data.parentEntityId);
+
+    return adGroups.length;
+  } catch (error) {
+    // Track prewarm progress: mark job as failed
+    markJobFailed(data.customerId, data.parentEntityId);
+    throw error;
+  }
 }
 
 async function refreshKeywords(data: RefreshJobData): Promise<number> {

@@ -29,19 +29,41 @@ import VirtualizedGrid, { useVirtualization } from './VirtualizedGrid';
 import { Recommendation } from '@/lib/recommendations';
 import { checkActionGuardrails, checkBulkActionsGuardrails, GuardrailResult, ActionWithAIScore } from '@/lib/guardrails';
 import { CampaignIssue } from '@/types/health';
-import DateRangePicker, { DateRange } from '@/components/DateRangePicker';
+import DateRangePicker from '@/components/DateRangePicker';
+import { DateRange, DateRangePreset } from '@/hooks/useDateRangeParams';
 import { useCampaignsData } from '@/contexts/CampaignsDataContext';
 import { CampaignEditor } from '@/components/CampaignEditor';
 import { BudgetManager } from '@/components/BudgetManager';
 import { BudgetReallocationModal } from '@/components/BudgetOptimizer';
 import DataFreshnessIndicator from '@/components/ui/DataFreshnessIndicator';
+import DataStalenessBanner from '@/components/ui/DataStalenessBanner';
+import DataFreshnessStrip, { useDataFreshness } from '@/components/ui/DataFreshnessStrip';
+import DataIntegrityChip from '@/components/ui/DataIntegrityChip';
+import { HierarchyValidationSummary } from '@/lib/cache/hybrid-fetch';
 
 // Cache metadata type from API response
 interface CacheMeta {
-  source: 'cache' | 'api';
+  source: 'cache' | 'api' | 'hybrid';
+  sourceLabel?: string;
+  sourceDetails?: {
+    dbRange: string | null;
+    apiRange: string | null;
+    dbDays: number;
+    apiDays: number;
+  } | null;
   ageSeconds: number | null;
   lastSyncedAt: string | null;
   refreshing: boolean;
+  pendingApiChunks?: number;
+  queuedForBackfill?: boolean;
+  fetchOutcome?: 'success' | 'partial' | 'queued' | 'error';
+  coverage?: {
+    percentCached: number;
+    percentMissing: number;
+    totalDays: number;
+  } | null;
+  // Hierarchy validation (sampled, warn-only)
+  hierarchyValidation?: HierarchyValidationSummary;
 }
 
 // Type for pending action before guardrail check - reuse the exported type from guardrails
@@ -89,8 +111,8 @@ export default function SmartGrid() {
   const { isOpen, entity, entityType, openPanel, closePanel } = useDetailPanel();
   const { addAction, actions: queuedActions } = useActionQueue();
   const { settings: guardrailSettings } = useGuardrails();
-  // Use context's dateRange as single source of truth for consistent data across all views
-  const { dateRange: contextDateRange, setDateRange: setContextDateRange } = useCampaignsData();
+  // Date range from URL params via context (single source of truth)
+  const { dateRange, setDateRange } = useCampaignsData();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -100,16 +122,6 @@ export default function SmartGrid() {
   const [showFilters, setShowFilters] = useState(false);
   const [activeView, setActiveView] = useState('all');
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
-  // Convert context dateRange to DateRange type with preset
-  const dateRange: DateRange = {
-    startDate: contextDateRange.startDate,
-    endDate: contextDateRange.endDate,
-    preset: (contextDateRange.preset as DateRange['preset']) || 'custom',
-  };
-  const setDateRange = (range: DateRange) => {
-    console.log('[SmartGrid] Setting date range via context:', range);
-    setContextDateRange(range);
-  };
   const [isCampaignEditorOpen, setIsCampaignEditorOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [isBudgetManagerOpen, setIsBudgetManagerOpen] = useState(false);
@@ -266,9 +278,13 @@ export default function SmartGrid() {
         if (data._meta) {
           setCacheMeta({
             source: data._meta.source,
+            sourceLabel: data._meta.sourceLabel,
+            sourceDetails: data._meta.sourceDetails,
             ageSeconds: data._meta.ageSeconds,
             lastSyncedAt: data._meta.lastSyncedAt,
             refreshing: data._meta.refreshing,
+            pendingApiChunks: data._meta.pendingApiChunks,
+            coverage: data._meta.coverage,
           });
         }
       } catch (err) {
@@ -391,7 +407,7 @@ export default function SmartGrid() {
     });
   };
 
-  const handleViewChange = (viewId: string, viewFilters?: FilterConfig, viewSorting?: SortConfig) => {
+  const handleViewChange = (viewId: string, viewFilters?: FilterConfig, viewSorting?: SortConfig, datePreset?: string | null) => {
     setActiveView(viewId);
     // If filters and sorting are provided (from saved view), use them
     if (viewFilters !== undefined) {
@@ -400,7 +416,24 @@ export default function SmartGrid() {
     if (viewSorting !== undefined) {
       setSortConfig(viewSorting);
     }
+    // If date preset is provided, apply it using the preset name directly
+    if (datePreset) {
+      // Use the preset directly - setDateRange accepts DateRangePreset
+      const validPresets = ['yesterday', 'last7days', 'last30days', 'last90days', 'thisMonth', 'lastMonth', 'today', 'custom'] as const;
+      type ValidPreset = typeof validPresets[number];
+      if (validPresets.includes(datePreset as ValidPreset)) {
+        setDateRange(datePreset as DateRangePreset);
+      }
+    }
   };
+
+  // Current view state for saving (cast types for compatibility with ViewState)
+  const currentViewState = useMemo(() => ({
+    filters: filters as Record<string, unknown>,
+    sorting: { column: sortConfig.column as string, direction: sortConfig.direction },
+    columns: ['name', 'status', 'spend', 'conversions', 'cpa', 'aiScore'], // Default columns - TODO: make configurable
+    datePreset: dateRange.preset !== 'custom' ? dateRange.preset : null,
+  }), [filters, sortConfig, dateRange.preset]);
 
   const handleCampaignClick = (campaign: Campaign) => {
     drillIntoCampaign(campaign);
@@ -721,6 +754,7 @@ export default function SmartGrid() {
                     setFixPanelIssue(issue);
                     setIsFixPanelOpen(true);
                   }}
+                  lastSyncedAt={cacheMeta?.lastSyncedAt}
                 />
               ) : (
                 <table className="w-full min-w-[900px]">
@@ -751,6 +785,7 @@ export default function SmartGrid() {
                           setFixPanelIssue(issue);
                           setIsFixPanelOpen(true);
                         }}
+                        lastSyncedAt={cacheMeta?.lastSyncedAt}
                       />
                     ))}
                   </tbody>
@@ -803,18 +838,25 @@ export default function SmartGrid() {
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
-          {/* Freshness indicator - visible in header */}
+          {/* User-facing freshness strip - visible in header */}
           {cacheMeta && currentLevel === 'campaigns' && (
-            <DataFreshnessIndicator
+            <DataFreshnessStrip
               lastUpdated={cacheMeta.lastSyncedAt}
               isRefreshing={cacheMeta.refreshing || (isLoading && campaigns.length > 0)}
-              cacheState={
-                cacheMeta.ageSeconds === null ? 'unknown' :
-                cacheMeta.ageSeconds < 300 ? 'fresh' :
-                cacheMeta.ageSeconds < 3600 ? 'stale' :
-                'expired'
+              pendingJobs={cacheMeta.pendingApiChunks || 0}
+              dataSource={
+                cacheMeta.source === 'api' ? 'live' :
+                cacheMeta.source === 'hybrid' ? 'partial' :
+                'cached'
               }
-              compact
+              coveragePercent={cacheMeta.coverage?.percentCached}
+            />
+          )}
+          {/* Hierarchy validation warning chip (sampled, warn-only) */}
+          {cacheMeta?.hierarchyValidation?.hasIssues && currentLevel === 'campaigns' && (
+            <DataIntegrityChip
+              validation={cacheMeta.hierarchyValidation}
+              customerId={currentAccount?.googleAccountId}
             />
           )}
           <DateRangePicker value={dateRange} onChange={setDateRange} />
@@ -874,6 +916,21 @@ export default function SmartGrid() {
         </div>
       </div>
 
+      {/* Data Staleness Banner - shows when data is stale or expired */}
+      {currentLevel === 'campaigns' && cacheMeta && (
+        <DataStalenessBanner
+          cacheState={
+            cacheMeta.ageSeconds === null ? 'unknown' :
+            cacheMeta.ageSeconds < 300 ? 'fresh' :
+            cacheMeta.ageSeconds < 3600 ? 'stale' :
+            'expired'
+          }
+          lastSyncedAt={cacheMeta.lastSyncedAt}
+          isRefreshing={cacheMeta.refreshing || isLoading}
+          entityType="campaigns"
+        />
+      )}
+
       {/* Error State */}
       {error && (
         <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -898,6 +955,8 @@ export default function SmartGrid() {
           activeView={activeView}
           onViewChange={handleViewChange}
           counts={viewCounts}
+          currentState={currentViewState}
+          entityType="campaign"
         />
       )}
 
@@ -964,6 +1023,9 @@ export default function SmartGrid() {
                   cacheMeta.ageSeconds < 3600 ? 'stale' :   // <1 hour
                   'expired'                                  // >1 hour
                 }
+                sourceLabel={cacheMeta.sourceLabel}
+                pendingApiChunks={cacheMeta.pendingApiChunks}
+                coveragePercent={cacheMeta.coverage?.percentCached}
                 compact
               />
             )}

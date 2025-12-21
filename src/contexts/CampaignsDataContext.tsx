@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { useAccount } from './AccountContext';
 import { Campaign, AdGroup, Keyword } from '@/types/campaign';
+import { useDateRangeState, DateRange, DateRangePreset } from '@/hooks/useDateRangeParams';
 
 interface DailyMetrics {
   date: string;
@@ -115,9 +116,9 @@ interface CampaignsDataContextValue {
   dailyMetrics: DailyMetrics[];
   isDailyMetricsLoading: boolean;
 
-  // Date range (single source of truth for the entire app)
-  dateRange: { startDate: string; endDate: string; preset?: string };
-  setDateRange: (range: { startDate: string; endDate: string; preset?: string }) => void;
+  // Date range (single source of truth from URL params)
+  dateRange: DateRange;
+  setDateRange: (range: DateRange | DateRangePreset) => void;
 
   // Data freshness tracking
   lastSyncedAt: Date | null;
@@ -140,68 +141,14 @@ interface CampaignsDataContextValue {
 
 const CampaignsDataContext = createContext<CampaignsDataContextValue | undefined>(undefined);
 
-const DATE_RANGE_KEY = 'dashboard-date-range';
-
-function getDefaultDateRange(): { startDate: string; endDate: string; preset: string } {
-  // Default to Last 7 Days ending yesterday to avoid partial/incomplete data for today
-  // Today's data is incomplete until midnight in the account's timezone
-  const endDate = new Date();
-  endDate.setDate(endDate.getDate() - 1); // Yesterday
-  const startDate = new Date(endDate);
-  startDate.setDate(startDate.getDate() - 6); // 7 days ending yesterday
-
-  return {
-    startDate: startDate.toISOString().split('T')[0],
-    endDate: endDate.toISOString().split('T')[0],
-    preset: 'last7days',
-  };
-}
-
-function getSavedDateRange(): { startDate: string; endDate: string; preset?: string } | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const saved = localStorage.getItem(DATE_RANGE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      // Validate the dates are reasonable (not too old)
-      const savedEnd = new Date(parsed.endDate);
-      // Use yesterday as reference to avoid partial data
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const daysDiff = Math.abs((yesterday.getTime() - savedEnd.getTime()) / (1000 * 60 * 60 * 24));
-      // If saved end date is more than 1 day off from yesterday, recalculate
-      if (daysDiff > 1) {
-        // Recalculate with same duration but ending yesterday
-        const savedStart = new Date(parsed.startDate);
-        const duration = Math.ceil((savedEnd.getTime() - savedStart.getTime()) / (1000 * 60 * 60 * 24));
-        const newEnd = new Date(yesterday);
-        const newStart = new Date(newEnd);
-        newStart.setDate(newStart.getDate() - duration);
-        return {
-          startDate: newStart.toISOString().split('T')[0],
-          endDate: newEnd.toISOString().split('T')[0],
-          preset: parsed.preset || 'custom',
-        };
-      }
-      return { ...parsed, preset: parsed.preset || 'custom' };
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return null;
-}
-
-function saveDateRange(range: { startDate: string; endDate: string }): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(DATE_RANGE_KEY, JSON.stringify(range));
-  } catch {
-    // Ignore storage errors
-  }
-}
+// Note: Date range is now managed via URL params using useDateRangeParams hook
+// This ensures SSR + client always match (single source of truth)
 
 export function CampaignsDataProvider({ children }: { children: ReactNode }) {
   const { currentAccount } = useAccount();
+
+  // Date range - SSR-safe state management with consistent preset calculation
+  const { dateRange, setDateRange } = useDateRangeState();
 
   // Campaign data state
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -220,16 +167,6 @@ export function CampaignsDataProvider({ children }: { children: ReactNode }) {
   // Refs for rate limiting
   const lastFetchTime = useRef<number>(0);
   const isFetching = useRef<boolean>(false);
-
-  // Date range state - restore from localStorage or use default
-  const [dateRange, setDateRangeState] = useState(() => getSavedDateRange() || getDefaultDateRange());
-
-  // Wrapper for setDateRange that also persists to localStorage
-  const setDateRange = useCallback((range: { startDate: string; endDate: string; preset?: string }) => {
-    console.log('[CampaignsDataContext] Setting date range:', range);
-    setDateRangeState(range);
-    saveDateRange(range);
-  }, []);
 
   // Ad Groups state (for AI context when drilling down)
   const [adGroups, setAdGroups] = useState<AdGroup[]>([]);

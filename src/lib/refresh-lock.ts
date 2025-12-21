@@ -348,8 +348,8 @@ export function getLockStatus(): {
 
 export const CACHE_TTL = {
   FRESH: 5 * 60 * 1000,         // 5 minutes - super fresh, no refresh needed
-  STALE: 60 * 60 * 1000,        // 1 hour - still usable, trigger background refresh
-  EXPIRED: 24 * 60 * 60 * 1000, // 24 hours - hard expiry, force blocking refresh
+  STALE: 60 * 60 * 1000,        // 60 minutes - still usable, trigger background refresh
+  EXPIRED: 6 * 60 * 60 * 1000,  // 6 hours - hard expiry, force blocking refresh
 };
 
 // ============================================

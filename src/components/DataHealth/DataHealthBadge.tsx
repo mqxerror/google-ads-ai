@@ -1,47 +1,112 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useAccount } from '@/contexts/AccountContext';
+import { useCampaignsData } from '@/contexts/CampaignsDataContext';
 
 interface DataHealthStatus {
   status: 'healthy' | 'partial' | 'stale' | 'error';
   daysAvailable: number;
   totalDays: number;
-  lastSync: Date;
+  lastSync: Date | null;
   conversionLag?: number;
   issues: DataIssue[];
 }
 
 interface DataIssue {
-  type: 'missing_days' | 'conversion_lag' | 'api_delay' | 'tracking_gap';
+  type: 'missing_days' | 'conversion_lag' | 'api_delay' | 'tracking_gap' | 'cache_stale';
   severity: 'info' | 'warning' | 'critical';
   message: string;
   detail?: string;
 }
 
-// Mock data health - in production this would come from an API
+// Real data health from CampaignsDataContext
 function useDataHealth(): DataHealthStatus {
-  return {
-    status: 'partial',
-    daysAvailable: 4,
-    totalDays: 5,
-    lastSync: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
-    conversionLag: 24,
-    issues: [
-      {
+  const {
+    dateRange,
+    dataCompleteness,
+    syncStatus,
+    lastSyncedAt,
+    isLoading,
+  } = useCampaignsData();
+
+  return useMemo(() => {
+    // Calculate total days in range
+    const start = new Date(dateRange.startDate);
+    const end = new Date(dateRange.endDate);
+    const totalDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+
+    // Calculate days available from completeness percentage
+    const daysAvailable = Math.round((dataCompleteness / 100) * totalDays);
+
+    // Determine status based on real data
+    let status: DataHealthStatus['status'] = 'healthy';
+    if (syncStatus === 'error') {
+      status = 'error';
+    } else if (syncStatus === 'partial' || dataCompleteness < 100) {
+      status = 'partial';
+    } else if (lastSyncedAt) {
+      // Check if data is stale (> 24 hours old)
+      const ageMs = Date.now() - lastSyncedAt.getTime();
+      if (ageMs > 24 * 60 * 60 * 1000) {
+        status = 'stale';
+      }
+    }
+
+    // Build issues list based on real data
+    const issues: DataIssue[] = [];
+
+    // Missing days issue
+    if (daysAvailable < totalDays) {
+      const missingDays = totalDays - daysAvailable;
+      issues.push({
         type: 'missing_days',
-        severity: 'warning',
-        message: 'Yesterday\'s data incomplete',
-        detail: 'Google Ads API reported partial data for Dec 17. Full data typically available within 24h.',
-      },
-      {
-        type: 'conversion_lag',
+        severity: missingDays > 2 ? 'warning' : 'info',
+        message: `${missingDays} day${missingDays > 1 ? 's' : ''} of data pending`,
+        detail: 'Some days may not have data yet. This is normal for recent dates - Google Ads data typically takes 24-48h to finalize.',
+      });
+    }
+
+    // Stale cache warning
+    if (lastSyncedAt) {
+      const ageHours = Math.round((Date.now() - lastSyncedAt.getTime()) / (1000 * 60 * 60));
+      if (ageHours > 6) {
+        issues.push({
+          type: 'cache_stale',
+          severity: ageHours > 24 ? 'warning' : 'info',
+          message: `Data is ${ageHours}h old`,
+          detail: 'Click "Refresh Data" to fetch the latest metrics from Google Ads.',
+        });
+      }
+    }
+
+    // Always show conversion lag info
+    issues.push({
+      type: 'conversion_lag',
+      severity: 'info',
+      message: '24-hour conversion attribution window',
+      detail: 'Some conversions may not yet be attributed. Final numbers available after attribution window closes.',
+    });
+
+    // Syncing status
+    if (isLoading) {
+      issues.unshift({
+        type: 'api_delay',
         severity: 'info',
-        message: '24-hour conversion attribution window',
-        detail: 'Some conversions may not yet be attributed. Final numbers available after attribution window closes.',
-      },
-    ],
-  };
+        message: 'Syncing data...',
+        detail: 'Fetching latest metrics from Google Ads API.',
+      });
+    }
+
+    return {
+      status,
+      daysAvailable,
+      totalDays,
+      lastSync: lastSyncedAt,
+      conversionLag: 24, // Standard Google Ads attribution window
+      issues,
+    };
+  }, [dateRange, dataCompleteness, syncStatus, lastSyncedAt, isLoading]);
 }
 
 export default function DataHealthBadge() {
@@ -82,14 +147,16 @@ export default function DataHealthBadge() {
 
   const config = statusConfig[health.status];
 
-  const formatTime = (date: Date) => {
+  const formatTime = (date: Date | null) => {
+    if (!date) return 'Never';
     const now = new Date();
     const diff = now.getTime() - date.getTime();
     const hours = Math.floor(diff / (1000 * 60 * 60));
     const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
 
     if (hours > 0) return `${hours}h ${minutes}m ago`;
-    return `${minutes}m ago`;
+    if (minutes > 0) return `${minutes}m ago`;
+    return 'Just now';
   };
 
   return (

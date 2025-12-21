@@ -1,3 +1,6 @@
+// Force Node.js runtime (not Edge) for Prisma compatibility
+export const runtime = 'nodejs';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
@@ -14,6 +17,13 @@ import {
   CACHE_TTL,
 } from '@/lib/refresh-lock';
 import { enqueueKeywordRefresh } from '@/lib/queue';
+import {
+  buildQueryContext,
+  buildQueryMeta,
+  createQueryCacheKey,
+  extractDatesFromMetrics,
+  validateQueryContext,
+} from '@/lib/query-context';
 
 // GET /api/google-ads/keywords?accountId=xxx&adGroupId=xxx&startDate=xxx&endDate=xxx - Fetch keywords for an ad group
 export async function GET(request: NextRequest) {
@@ -28,6 +38,15 @@ export async function GET(request: NextRequest) {
   const adGroupId = searchParams.get('adGroupId');
   const startDate = searchParams.get('startDate');
   const endDate = searchParams.get('endDate');
+
+  // Additional query modifiers for query context
+  const preset = searchParams.get('preset') || undefined;
+  const timezone = searchParams.get('timezone') || 'UTC';
+  const includeToday = searchParams.get('includeToday') !== 'false';
+  const conversionMode = (searchParams.get('conversionMode') || 'default') as
+    | 'default'
+    | 'by_conversion_time'
+    | 'by_click_time';
 
   if (!accountId) {
     return NextResponse.json({ error: 'accountId is required' }, { status: 400 });
@@ -258,10 +277,47 @@ export async function GET(request: NextRequest) {
       ? new Date(Math.min(...cachedMetrics.map(m => m.syncedAt.getTime())))
       : null;
 
+    // Build query context for date range correctness
+    const queryContext = buildQueryContext(startDate, endDate, {
+      timezone,
+      includeToday,
+      conversionMode,
+      requestedPreset: preset,
+    });
+
+    // Validate query context (catches Yesterday != 1-day bugs)
+    const validation = validateQueryContext(queryContext);
+    if (!validation.valid) {
+      console.warn(`[API] Keywords query context validation failed: ${validation.error}`);
+    }
+
+    // Extract actual dates from cached metrics
+    const actualDates = extractDatesFromMetrics(cachedMetrics);
+
+    // Build comprehensive cache key
+    const fullCacheKey = createQueryCacheKey({
+      customerId: googleAdsAccount.googleAccountId,
+      entityType: 'KEYWORD',
+      startDate,
+      endDate,
+      timezone,
+      conversionMode,
+      includeToday,
+      parentEntityId: adGroupId,
+    });
+
+    // Build query meta with date coverage analysis
+    const queryMeta = buildQueryMeta(queryContext, actualDates, dataSource, fullCacheKey);
+
     // Return data with comprehensive metadata
     return NextResponse.json({
       keywords,
       _meta: {
+        queryContext: queryMeta.queryContext,
+        datesCovered: queryMeta.datesCovered,
+        missingDays: queryMeta.missingDays,
+        warnings: queryMeta.warnings,
+        cacheKey: fullCacheKey,
         source: dataSource,
         ageSeconds: cacheAge === Infinity ? null : Math.round(cacheAge / 1000),
         lastSyncedAt: oldestSyncDate?.toISOString() || null,

@@ -1,3 +1,6 @@
+// Force Node.js runtime (not Edge) for Prisma compatibility
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';

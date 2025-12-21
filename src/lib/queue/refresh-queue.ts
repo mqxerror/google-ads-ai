@@ -135,10 +135,12 @@ export function generateJobId(data: Pick<
   | 'columns'
   | 'filters'
 >): string {
+  // IMPORTANT: BullMQ does NOT allow colons in job IDs
+  // Use underscore as separator instead
   const parts = [
-    data.type,
+    data.type.replace(/:/g, '_'), // refresh:campaigns -> refresh_campaigns
     data.customerId,
-    data.parentEntityId || '_root',
+    data.parentEntityId || 'root',
     data.startDate,
     data.endDate,
   ];
@@ -146,13 +148,13 @@ export function generateJobId(data: Pick<
   // Include query modifiers that affect result shape
   // These are critical for cache consistency
   if (data.conversionMode) {
-    parts.push(`conv:${data.conversionMode}`);
+    parts.push(`conv-${data.conversionMode}`);
   }
   if (data.includeToday !== undefined) {
-    parts.push(`today:${data.includeToday ? '1' : '0'}`);
+    parts.push(`today-${data.includeToday ? '1' : '0'}`);
   }
   if (data.timezone) {
-    parts.push(`tz:${data.timezone.replace('/', '_')}`);
+    parts.push(`tz-${data.timezone.replace(/[/:]/g, '_')}`);
   }
   if (data.columns && data.columns.length > 0) {
     // Sort columns for consistent hash regardless of order
@@ -161,7 +163,7 @@ export function generateJobId(data: Pick<
       .update(data.columns.slice().sort().join(','))
       .digest('hex')
       .slice(0, 6);
-    parts.push(`cols:${columnsHash}`);
+    parts.push(`cols-${columnsHash}`);
   }
 
   // Include filters hash if present
@@ -171,10 +173,10 @@ export function generateJobId(data: Pick<
       .update(JSON.stringify(data.filters))
       .digest('hex')
       .slice(0, 8);
-    parts.push(`f:${filtersHash}`);
+    parts.push(`f-${filtersHash}`);
   }
 
-  return parts.join(':');
+  return parts.join('_');
 }
 
 // ============================================
@@ -279,8 +281,19 @@ export async function enqueueRefreshJob(
   data: Omit<RefreshJobData, 'enqueuedAt' | 'priority'>,
   priority: 'normal' | 'high' = 'normal'
 ): Promise<string | 'duplicate' | 'rate-limited' | null> {
+  // Auto-initialize queue if not ready
   if (!isQueueReady() || !refreshQueue) {
-    console.warn('[Queue] Queue not ready, cannot enqueue');
+    console.log('[Queue] Auto-initializing queue for enqueue...');
+    try {
+      await initRefreshQueue();
+    } catch (err) {
+      console.warn('[Queue] Failed to initialize queue:', err);
+    }
+  }
+
+  // Check again after init attempt
+  if (!isQueueReady() || !refreshQueue) {
+    console.warn('[Queue] Queue not ready after init, cannot enqueue');
     return null;
   }
 

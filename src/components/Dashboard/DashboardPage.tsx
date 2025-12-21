@@ -34,16 +34,28 @@ export default function DashboardPage() {
     }
   };
 
-  // Handle date range change
+  // Handle date range change - use preset strings for consistency
   const handleDateRangeChange = (days: number) => {
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
+    // Map days to presets for consistent date calculation
+    if (days === 7) {
+      setDateRange('last7days');
+    } else if (days === 30) {
+      setDateRange('last30days');
+    } else if (days === 90) {
+      setDateRange('last90days');
+    } else {
+      // For custom ranges, calculate dates manually
+      const endDate = new Date();
+      endDate.setDate(endDate.getDate() - 1); // End yesterday to match preset behavior
+      const startDate = new Date(endDate);
+      startDate.setDate(startDate.getDate() - days + 1);
 
-    setDateRange({
-      startDate: startDate.toISOString().split('T')[0],
-      endDate: endDate.toISOString().split('T')[0],
-    });
+      setDateRange({
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0],
+        preset: 'custom',
+      });
+    }
   };
 
   // Calculate current date range in days

@@ -1,18 +1,18 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import {
+  DateRange,
+  DateRangePreset,
+  calculateDatesForPreset,
+} from '@/hooks/useDateRangeParams';
 
-export type DateRangePreset = 'today' | 'yesterday' | 'last7days' | 'last30days' | 'last90days' | 'thisMonth' | 'lastMonth' | 'custom';
-
-export interface DateRange {
-  startDate: string; // YYYY-MM-DD
-  endDate: string;   // YYYY-MM-DD
-  preset: DateRangePreset;
-}
+// Re-export types for backwards compatibility
+export type { DateRange, DateRangePreset } from '@/hooks/useDateRangeParams';
 
 interface DateRangePickerProps {
   value: DateRange;
-  onChange: (range: DateRange) => void;
+  onChange: (range: DateRange | DateRangePreset) => void;
 }
 
 const presetOptions: { id: DateRangePreset; label: string }[] = [
@@ -26,45 +26,9 @@ const presetOptions: { id: DateRangePreset; label: string }[] = [
   { id: 'custom', label: 'Custom Range' },
 ];
 
+// Delegate to the single source of truth for preset date calculations
 function getPresetDates(preset: DateRangePreset): { startDate: string; endDate: string } {
-  const today = new Date();
-  const formatDate = (d: Date) => d.toISOString().split('T')[0];
-
-  switch (preset) {
-    case 'today':
-      return { startDate: formatDate(today), endDate: formatDate(today) };
-    case 'yesterday': {
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
-      return { startDate: formatDate(yesterday), endDate: formatDate(yesterday) };
-    }
-    case 'last7days': {
-      const start = new Date(today);
-      start.setDate(start.getDate() - 6);
-      return { startDate: formatDate(start), endDate: formatDate(today) };
-    }
-    case 'last30days': {
-      const start = new Date(today);
-      start.setDate(start.getDate() - 29);
-      return { startDate: formatDate(start), endDate: formatDate(today) };
-    }
-    case 'last90days': {
-      const start = new Date(today);
-      start.setDate(start.getDate() - 89);
-      return { startDate: formatDate(start), endDate: formatDate(today) };
-    }
-    case 'thisMonth': {
-      const start = new Date(today.getFullYear(), today.getMonth(), 1);
-      return { startDate: formatDate(start), endDate: formatDate(today) };
-    }
-    case 'lastMonth': {
-      const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      const end = new Date(today.getFullYear(), today.getMonth(), 0);
-      return { startDate: formatDate(start), endDate: formatDate(end) };
-    }
-    default:
-      return { startDate: formatDate(today), endDate: formatDate(today) };
-  }
+  return calculateDatesForPreset(preset);
 }
 
 function getPresetLabel(preset: DateRangePreset): string {
@@ -106,8 +70,9 @@ export default function DateRangePicker({ value, onChange }: DateRangePickerProp
       return;
     }
 
-    const dates = getPresetDates(preset);
-    onChange({ ...dates, preset });
+    // Pass just the preset - let the URL hook calculate correct dates
+    // This ensures consistent date calculation everywhere
+    onChange(preset);
     setShowCustom(false);
     setIsOpen(false);
   };
@@ -126,9 +91,11 @@ export default function DateRangePicker({ value, onChange }: DateRangePickerProp
     }
   };
 
-  // Use stable label during SSR, then show actual dates after hydration
-  const displayLabel = !mounted
-    ? getPresetLabel(value.preset) // Stable label for SSR
+  // Use stable preset label during SSR, then show actual dates after hydration
+  // Also handle SSR placeholder dates (2000-01-01) gracefully
+  const isPlaceholderDate = value.startDate.startsWith('2000-');
+  const displayLabel = !mounted || isPlaceholderDate
+    ? getPresetLabel(value.preset) // Stable label for SSR or while loading real dates
     : value.preset === 'custom'
       ? `${formatDisplayDate(value.startDate)} - ${formatDisplayDate(value.endDate)}`
       : getPresetLabel(value.preset);
@@ -211,8 +178,9 @@ export default function DateRangePicker({ value, onChange }: DateRangePickerProp
   );
 }
 
-// Export utility function to create initial date range
+// Deprecated: Use useDateRangeParams hook instead for URL-based date management
+// This is kept for backwards compatibility but delegates to the hook's logic
 export function getDefaultDateRange(): DateRange {
-  const dates = getPresetDates('last30days');
-  return { ...dates, preset: 'last30days' };
+  const dates = calculateDatesForPreset('last7days');
+  return { ...dates, preset: 'last7days' };
 }

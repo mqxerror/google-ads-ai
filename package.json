@@ -3,9 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3001",
+    "dev": "next dev -p 4000",
     "build": "next build",
     "start": "next start",
+    "worker": "npx tsx scripts/worker.ts",
+    "smoke-test": "npx tsx scripts/smoke-test.ts",
+    "test:date-range": "npx tsx scripts/test-date-range.ts",
     "lint": "eslint",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -20,10 +23,12 @@
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
+    "@heroicons/react": "^2.2.0",
     "@prisma/client": "^6.19.1",
     "@types/react-window": "^1.8.8",
     "bullmq": "^5.66.2",
     "date-fns": "^4.1.0",
+    "dotenv": "^17.2.3",
     "google-ads-api": "^21.0.1",
     "ioredis": "^5.8.2",
     "next": "16.0.10",
@@ -34,6 +39,7 @@
     "react-window": "^2.2.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
@@ -49,6 +55,7 @@
     "jest-environment-jsdom": "^30.2.0",
     "prettier": "^3.7.4",
     "tailwindcss": "^4",
+    "tsx": "^4.19.2",
     "typescript": "^5",
     "webpack-bundle-analyzer": "^4.10.2"
   }

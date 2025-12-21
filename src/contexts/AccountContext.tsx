@@ -120,11 +120,16 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       setIsSyncing(true);
       setError(null);
       const response = await fetch('/api/google-ads/accounts');
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to sync accounts');
-      }
       const data = await response.json();
+
+      if (!response.ok) {
+        // Handle typed error response
+        const errorMessage = data.action
+          ? `${data.error}. ${data.action}`
+          : data.error || 'Failed to sync accounts';
+        const correlationId = data.correlationId ? ` (ref: ${data.correlationId})` : '';
+        throw new Error(`${errorMessage}${correlationId}`);
+      }
 
       // Update local state with synced accounts
       if (data.accounts?.length > 0) {
@@ -138,8 +143,9 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-      console.error('Error syncing Google Ads accounts:', err);
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      setError(errorMsg);
+      console.error('[AccountContext] Error syncing Google Ads accounts:', errorMsg);
     } finally {
       setIsSyncing(false);
     }

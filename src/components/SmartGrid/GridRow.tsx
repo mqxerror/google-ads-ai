@@ -16,6 +16,30 @@ interface GridRowProps {
   onManageBudget?: (e: React.MouseEvent) => void;
   onUpdateCampaign?: (id: string, updates: Partial<Campaign>) => void;
   onIssueClick?: (campaign: Campaign, issue: CampaignIssue) => void;
+  lastSyncedAt?: string | null;
+}
+
+// Format relative time like "3m ago", "2h ago", "1d ago"
+function formatRelativeTime(isoString: string | null | undefined): string {
+  if (!isoString) return '-';
+
+  const date = new Date(isoString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+
+  if (diffMs < 0) return 'now';
+
+  const diffSeconds = Math.floor(diffMs / 1000);
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSeconds < 60) return 'now';
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 // Apple-style type badge - minimal, neutral
@@ -106,6 +130,7 @@ export default function GridRow({
   onManageBudget,
   onUpdateCampaign,
   onIssueClick,
+  lastSyncedAt,
 }: GridRowProps) {
   const [showScoreBreakdown, setShowScoreBreakdown] = useState(false);
   const [showFixDrawer, setShowFixDrawer] = useState(false);
@@ -278,6 +303,13 @@ export default function GridRow({
             issue={selectedIssue}
           />
         )}
+      </td>
+
+      {/* Last Synced */}
+      <td className="px-4 text-right w-24">
+        <span className="text-[12px] text-[var(--text3)] tabular-nums">
+          {formatRelativeTime(lastSyncedAt)}
+        </span>
       </td>
     </tr>
   );

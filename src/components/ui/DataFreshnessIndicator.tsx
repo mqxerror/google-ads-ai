@@ -24,6 +24,12 @@ interface DataFreshnessIndicatorProps {
   isRefreshing?: boolean;
   /** Cache state for styling */
   cacheState?: 'fresh' | 'stale' | 'expired' | 'unknown';
+  /** Source label (e.g., "DB Cache", "Hybrid (80% DB, 20% API)") */
+  sourceLabel?: string;
+  /** Pending API chunks being fetched */
+  pendingApiChunks?: number;
+  /** Coverage percentage from cache */
+  coveragePercent?: number;
   /** Compact mode for inline display */
   compact?: boolean;
   /** Custom class name */
@@ -34,6 +40,9 @@ export default function DataFreshnessIndicator({
   lastUpdated,
   isRefreshing = false,
   cacheState = 'unknown',
+  sourceLabel,
+  pendingApiChunks,
+  coveragePercent,
   compact = false,
   className = '',
 }: DataFreshnessIndicatorProps) {
@@ -89,11 +98,16 @@ export default function DataFreshnessIndicator({
       <div className={`flex items-center gap-1.5 text-xs ${className}`}>
         <span className={`w-1.5 h-1.5 rounded-full ${isRefreshing ? 'bg-blue-500 animate-pulse' : getStateDot()}`} />
         {isRefreshing ? (
-          <span className="text-blue-600">Refreshing...</span>
+          <span className="text-blue-600">
+            Refreshing{pendingApiChunks ? ` (${pendingApiChunks} chunks)` : '...'}
+          </span>
         ) : timeAgo ? (
           <span className={getStateStyles()}>{timeAgo}</span>
         ) : (
           <span className="text-gray-400">No data</span>
+        )}
+        {sourceLabel && !isRefreshing && (
+          <span className="text-gray-400 border-l border-gray-200 pl-1.5">{sourceLabel}</span>
         )}
       </div>
     );
@@ -104,13 +118,30 @@ export default function DataFreshnessIndicator({
       <div className="flex items-center gap-1.5">
         <span className={`w-2 h-2 rounded-full ${isRefreshing ? 'bg-blue-500 animate-pulse' : getStateDot()}`} />
         {isRefreshing ? (
-          <span className="text-blue-600 font-medium">Refreshing data...</span>
+          <span className="text-blue-600 font-medium">
+            Refreshing data{pendingApiChunks ? ` (${pendingApiChunks} API chunks)` : '...'}
+          </span>
         ) : (
           <span className={`${getStateStyles()}`}>
             {timeAgo ? `Updated ${timeAgo}` : 'No cached data'}
           </span>
         )}
       </div>
+
+      {/* Source label */}
+      {sourceLabel && !isRefreshing && (
+        <span className="text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded text-[10px]">
+          {sourceLabel}
+        </span>
+      )}
+
+      {/* Coverage indicator for hybrid sources */}
+      {coveragePercent !== undefined && coveragePercent < 100 && !isRefreshing && (
+        <span className="text-blue-600 text-[10px] bg-blue-50 px-1.5 py-0.5 rounded">
+          {coveragePercent}% from cache
+        </span>
+      )}
+
       {cacheState === 'stale' && !isRefreshing && (
         <span className="text-yellow-600 text-[10px] bg-yellow-50 px-1.5 py-0.5 rounded">
           Background refresh queued

@@ -44,7 +44,7 @@ export const REDIS_CONFIG = {
   enableReadyCheck: false,
   // Timeouts
   connectTimeout: 10000,      // 10 seconds to connect
-  commandTimeout: 5000,       // 5 seconds per command
+  commandTimeout: 30000,      // 30 seconds per command (BullMQ uses blocking commands)
   // Keep-alive
   keepAlive: 30000,           // 30 seconds
   // Retry strategy with exponential backoff + jitter
@@ -145,4 +145,66 @@ export async function closeRedisConnection(): Promise<void> {
  */
 export function getRedisOptions() {
   return { ...REDIS_CONFIG };
+}
+
+// ============================================
+// Worker Heartbeat
+// ============================================
+
+const HEARTBEAT_KEY = 'gads:worker:heartbeat';
+const HEARTBEAT_TTL = 60; // Key expires after 60s of no updates
+
+/**
+ * Update worker heartbeat in Redis
+ * Should be called periodically by the worker
+ */
+export async function updateWorkerHeartbeat(workerId: string, jobsProcessed: number): Promise<void> {
+  try {
+    const redis = getRedisConnection();
+    const heartbeat = JSON.stringify({
+      workerId,
+      lastSeen: new Date().toISOString(),
+      jobsProcessed,
+      status: 'active',
+    });
+    await redis.setex(HEARTBEAT_KEY, HEARTBEAT_TTL, heartbeat);
+  } catch (err) {
+    console.warn('[Redis] Failed to update heartbeat:', (err as Error).message);
+  }
+}
+
+/**
+ * Get worker heartbeat status
+ * Returns null if no heartbeat or expired
+ */
+export async function getWorkerHeartbeat(): Promise<{
+  workerId: string;
+  lastSeen: string;
+  jobsProcessed: number;
+  status: 'active' | 'stale' | 'dead';
+  ageSeconds: number;
+} | null> {
+  try {
+    const redis = getRedisConnection();
+    const data = await redis.get(HEARTBEAT_KEY);
+    if (!data) return null;
+
+    const heartbeat = JSON.parse(data);
+    const ageMs = Date.now() - new Date(heartbeat.lastSeen).getTime();
+    const ageSeconds = Math.floor(ageMs / 1000);
+
+    // Determine status based on age
+    let status: 'active' | 'stale' | 'dead' = 'active';
+    if (ageSeconds > 30) status = 'stale';
+    if (ageSeconds > 60) status = 'dead';
+
+    return {
+      ...heartbeat,
+      status,
+      ageSeconds,
+    };
+  } catch (err) {
+    console.warn('[Redis] Failed to read heartbeat:', (err as Error).message);
+    return null;
+  }
 }

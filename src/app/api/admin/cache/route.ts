@@ -13,6 +13,9 @@
  * - endDate: Optional date range end
  */
 
+// Force Node.js runtime (not Edge) for Prisma compatibility
+export const runtime = 'nodejs';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import prisma from '@/lib/prisma';
@@ -24,7 +27,9 @@ import {
   getMetrics,
   getBlockingFetchStatus,
 } from '@/lib/refresh-lock';
-import { enqueueRefreshJob, isQueueReady } from '@/lib/queue';
+import { enqueueRefreshJob, isQueueReady, initRefreshQueue } from '@/lib/queue';
+import { invalidateMetricsCache } from '@/lib/cache/metrics-storage';
+import { EntityType } from '@prisma/client';
 
 // Reuse admin auth from queue route
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
@@ -206,8 +211,12 @@ export async function POST(request: NextRequest) {
 
     switch (action) {
       case 'refresh': {
+        // Auto-initialize queue if not ready
         if (!isQueueReady()) {
-          return NextResponse.json({ error: 'Queue not available' }, { status: 503 });
+          await initRefreshQueue();
+        }
+        if (!isQueueReady()) {
+          return NextResponse.json({ error: 'Queue not available - Redis may be down' }, { status: 503 });
         }
 
         // Get refresh token from account
@@ -275,8 +284,58 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      case 'invalidate-metrics': {
+        // Invalidate MetricsFact data for the current query context
+        // This is the one-click cache invalidation for debugging
+        if (!startDate || !endDate) {
+          return NextResponse.json({
+            error: 'startDate and endDate required for metrics invalidation',
+          }, { status: 400 });
+        }
+
+        // Map entityType to EntityType enum
+        const entityTypeMap: Record<string, EntityType> = {
+          campaigns: EntityType.CAMPAIGN,
+          'ad-groups': EntityType.AD_GROUP,
+          keywords: EntityType.KEYWORD,
+          ads: EntityType.AD,
+        };
+
+        const prismaEntityType = entityTypeMap[entityType];
+        if (!prismaEntityType) {
+          return NextResponse.json({
+            error: `Invalid entityType: ${entityType}. Use: campaigns, ad-groups, keywords, ads`,
+          }, { status: 400 });
+        }
+
+        // Clear lock
+        forceReleaseLock(cacheKey);
+
+        // Invalidate MetricsFact data
+        const result = await invalidateMetricsCache(
+          customerId,
+          prismaEntityType,
+          startDate,
+          endDate,
+          parentEntityId // optional entityId filter
+        );
+
+        console.log(
+          `[Cache Inspector] Invalidated ${result.deleted} MetricsFact rows for ${customerId}/${entityType} (${startDate} to ${endDate})`
+        );
+
+        return NextResponse.json({
+          success: true,
+          action: 'metrics_invalidated',
+          cacheKey,
+          deletedCount: result.deleted,
+          dateRange: { startDate, endDate },
+          entityType: prismaEntityType,
+        });
+      }
+
       default:
-        return NextResponse.json({ error: 'Invalid action. Use: refresh, invalidate' }, { status: 400 });
+        return NextResponse.json({ error: 'Invalid action. Use: refresh, invalidate, invalidate-metrics' }, { status: 400 });
     }
   } catch (error) {
     console.error('[Cache Inspector] POST error:', error);

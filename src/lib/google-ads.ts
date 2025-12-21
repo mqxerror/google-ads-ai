@@ -328,6 +328,93 @@ export async function fetchCampaigns(
   }
 }
 
+/**
+ * Fetch campaigns with per-day granularity for caching
+ *
+ * CRITICAL: This function returns one row per campaign per day.
+ * Use this when you need to store metrics in MetricsFact.
+ * The standard fetchCampaigns returns aggregated data which should NOT be cached.
+ */
+export async function fetchCampaignsDaily(
+  refreshToken: string,
+  customerId: string,
+  loginCustomerId?: string,
+  startDate?: string,
+  endDate?: string
+): Promise<Array<{
+  date: string;
+  campaignId: string;
+  campaignName: string;
+  campaignStatus: string;
+  campaignType: string;
+  impressions: number;
+  clicks: number;
+  costMicros: number;
+  conversions: number;
+  conversionsValue: number;
+}>> {
+  const client = createGoogleAdsClient(refreshToken);
+  const customer = getCustomer(client, customerId, refreshToken, loginCustomerId);
+
+  // Build date clause
+  let dateClause = '';
+  if (startDate && endDate) {
+    dateClause = `AND segments.date BETWEEN '${startDate}' AND '${endDate}'`;
+  } else {
+    const today = new Date();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
+    const defaultStart = thirtyDaysAgo.toISOString().split('T')[0];
+    const defaultEnd = today.toISOString().split('T')[0];
+    dateClause = `AND segments.date BETWEEN '${defaultStart}' AND '${defaultEnd}'`;
+  }
+
+  try {
+    // CRITICAL: Include segments.date in SELECT to get per-day rows
+    const query = `
+        SELECT
+          segments.date,
+          campaign.id,
+          campaign.name,
+          campaign.status,
+          campaign.advertising_channel_type,
+          metrics.impressions,
+          metrics.clicks,
+          metrics.cost_micros,
+          metrics.conversions,
+          metrics.conversions_value
+        FROM campaign
+        WHERE campaign.status != 'REMOVED'
+          ${dateClause}
+        ORDER BY segments.date DESC, metrics.cost_micros DESC
+      `;
+
+    logQuery('fetchCampaignsDaily', customerId, query, startDate && endDate ? { startDate, endDate } : undefined);
+
+    const results = await withExponentialBackoff(
+      () => customer.query(query),
+      customerId,
+      'fetchCampaignsDaily'
+    );
+
+    return results.map((row) => ({
+      date: row.segments?.date || '',
+      campaignId: row.campaign?.id?.toString() || '',
+      campaignName: row.campaign?.name || '',
+      campaignStatus: mapStatus(row.campaign?.status),
+      campaignType: mapCampaignType(row.campaign?.advertising_channel_type),
+      impressions: Number(row.metrics?.impressions || 0),
+      clicks: Number(row.metrics?.clicks || 0),
+      costMicros: Number(row.metrics?.cost_micros || 0),
+      conversions: Number(row.metrics?.conversions || 0),
+      conversionsValue: Number(row.metrics?.conversions_value || 0),
+    }));
+  } catch (error) {
+    console.error('Error fetching campaigns daily:', error);
+    throw error;
+  }
+}
+
 // Fetch ad groups for a campaign
 export async function fetchAdGroups(
   refreshToken: string,
@@ -383,6 +470,75 @@ export async function fetchAdGroups(
     });
   } catch (error) {
     console.error('Error fetching ad groups:', error);
+    throw error;
+  }
+}
+
+/**
+ * Fetch ad groups with per-day granularity for caching
+ *
+ * CRITICAL: Includes segments.date in SELECT to get per-day rows.
+ * Without segments.date in SELECT, Google returns aggregated totals.
+ */
+export async function fetchAdGroupsDaily(
+  refreshToken: string,
+  customerId: string,
+  campaignId: string,
+  startDate: string,
+  endDate: string,
+  loginCustomerId?: string
+): Promise<Array<{
+  date: string;
+  adGroupId: string;
+  adGroupName: string;
+  adGroupStatus: string;
+  impressions: number;
+  clicks: number;
+  costMicros: number;
+  conversions: number;
+}>> {
+  const client = createGoogleAdsClient(refreshToken);
+  const customer = getCustomer(client, customerId, refreshToken, loginCustomerId);
+
+  try {
+    // CRITICAL: Include segments.date in SELECT to get per-day rows
+    const query = `
+      SELECT
+        segments.date,
+        ad_group.id,
+        ad_group.name,
+        ad_group.status,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.conversions,
+        metrics.cost_micros
+      FROM ad_group
+      WHERE ad_group.campaign = 'customers/${customerId}/campaigns/${campaignId}'
+        AND ad_group.status != 'REMOVED'
+        AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+      ORDER BY segments.date DESC, metrics.cost_micros DESC
+    `;
+
+    logQuery('fetchAdGroupsDaily', customerId, query, { startDate, endDate });
+
+    const results = await withExponentialBackoff(
+      () => customer.query(query),
+      customerId,
+      'fetchAdGroupsDaily'
+    );
+
+    return results.map((row) => ({
+      date: row.segments?.date || '',
+      adGroupId: row.ad_group?.id?.toString() || '',
+      adGroupName: row.ad_group?.name || '',
+      adGroupStatus: mapStatus(row.ad_group?.status),
+      impressions: Number(row.metrics?.impressions || 0),
+      clicks: Number(row.metrics?.clicks || 0),
+      costMicros: Number(row.metrics?.cost_micros || 0),
+      conversions: Number(row.metrics?.conversions || 0),
+    }));
+  } catch (error) {
+    console.error('Error fetching ad groups daily:', error);
     throw error;
   }
 }

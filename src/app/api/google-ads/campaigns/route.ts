@@ -1,7 +1,11 @@
+// Force Node.js runtime (not Edge) for Prisma compatibility
+export const runtime = 'nodejs';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { auth, isDemoMode } from '@/lib/auth';
 import prisma from '@/lib/prisma';
-import { fetchCampaigns, createCampaign, updateCampaign } from '@/lib/google-ads';
+import { fetchCampaigns, fetchCampaignsDaily, createCampaign, updateCampaign } from '@/lib/google-ads';
+import { storeDailyMetrics, readAndAggregateMetrics, invalidateMetricsCache } from '@/lib/cache/metrics-storage';
 import { getOrSet, createCacheKey as createMemCacheKey, invalidateAccountCache, CACHE_TTL as MEM_CACHE_TTL } from '@/lib/cache';
 import { DEMO_CAMPAIGNS } from '@/lib/demo-data';
 import { EntityType, DataFreshness, Prisma } from '@prisma/client';
@@ -15,6 +19,22 @@ import {
   CACHE_TTL,
 } from '@/lib/refresh-lock';
 import { enqueueCampaignRefresh } from '@/lib/queue';
+import { analyzeDateRange, getSourceDetails } from '@/lib/cache/date-range-analyzer';
+import { validateCampaignHierarchy, HierarchyValidationResult } from '@/lib/validation/hierarchy-validation';
+import { isEnabled } from '@/lib/feature-flags';
+import {
+  buildQueryContext,
+  buildQueryMeta,
+  createQueryCacheKey,
+  extractDatesFromMetrics,
+  validateQueryContext,
+  QueryMeta,
+} from '@/lib/query-context';
+import { smartPrewarmAdGroups } from '@/lib/cache/smart-prewarm';
+
+// Hierarchy validation (sampled, warn-only)
+const HIERARCHY_VALIDATION_SAMPLE_RATE = 0.05; // 5% of queries
+const HIERARCHY_VARIANCE_TOLERANCE = 0.05; // 5% tolerance before warning
 
 // GET /api/google-ads/campaigns?accountId=xxx - Fetch campaigns for an account
 export async function GET(request: NextRequest) {
@@ -44,6 +64,27 @@ export async function GET(request: NextRequest) {
       { error: 'startDate and endDate are required for consistent metrics' },
       { status: 400 }
     );
+  }
+
+  // Extract additional query parameters for date-range correctness
+  const preset = searchParams.get('preset') || undefined; // e.g., 'yesterday', 'last7days'
+  const timezone = searchParams.get('timezone') || 'UTC';
+  const includeToday = searchParams.get('includeToday') !== 'false'; // default true
+  const conversionMode = (searchParams.get('conversionMode') || 'default') as 'default' | 'by_conversion_time' | 'by_click_time';
+
+  // Build query context for validation and metadata
+  const queryContext = buildQueryContext(startDate, endDate, {
+    timezone,
+    includeToday,
+    conversionMode,
+    requestedPreset: preset,
+  });
+
+  // Validate query context (fails loudly in dev if preset doesn't match range)
+  const validation = validateQueryContext(queryContext);
+  if (!validation.valid && process.env.NODE_ENV === 'development') {
+    console.error(`[Campaigns API] ${validation.error}`);
+    // In dev, we fail loudly; in prod, we continue but warn
   }
 
   try {
@@ -200,7 +241,7 @@ export async function GET(request: NextRequest) {
       });
 
       // 🔄 STALE-WHILE-REVALIDATE: Trigger background refresh if cache is getting old
-      if (needsBackgroundRefresh) {
+      if (needsBackgroundRefresh && isEnabled('QUEUE_REFRESH')) {
         console.log(`[API] Cache STALE - enqueueing background refresh`);
         recordStaleRefresh();
 
@@ -223,38 +264,141 @@ export async function GET(request: NextRequest) {
             console.log(`[API] Enqueued refresh job: ${result}`);
           }
         }).catch(err => console.error('[API] Failed to enqueue refresh:', err));
+      } else if (needsBackgroundRefresh) {
+        console.log('[API] Cache STALE - queue refresh disabled by feature flag');
       }
     } else {
       // ❌ CACHE MISS - Fetch from Google Ads API
       console.log(`[API] Cache MISS - fetching from Google Ads API`);
       recordCacheMiss();
 
-      const cacheKey = createMemCacheKey(
-        'campaigns',
+      // Fetch per-day data for proper caching (includes segments.date in SELECT)
+      const dailyData = await fetchCampaignsDaily(
+        googleOAuthAccount.refresh_token!,
         googleAdsAccount.googleAccountId,
+        googleAdsAccount.parentManagerId || undefined,
         startDate,
         endDate
       );
 
-      campaigns = await getOrSet(
-        cacheKey,
-        () => fetchCampaigns(
-          googleOAuthAccount.refresh_token!,
-          googleAdsAccount.googleAccountId,
-          googleAdsAccount.parentManagerId || undefined,
-          startDate,
-          endDate
-        ),
-        MEM_CACHE_TTL.MEDIUM
-      );
-
-      // Store in MetricsFact for future cache hits (background, don't await)
-      storeCampaignMetrics(
-        googleAdsAccount.id,
+      // Store per-day rows in MetricsFact (CRITICAL: only per-day data allowed)
+      storeDailyMetrics(
         googleAdsAccount.googleAccountId,
-        campaigns,
-        endDate
-      ).catch(err => console.error('[API] Failed to cache metrics:', err));
+        googleAdsAccount.id,
+        EntityType.CAMPAIGN,
+        dailyData.map(row => ({
+          date: row.date,
+          entityId: row.campaignId,
+          entityName: row.campaignName,
+          entityStatus: row.campaignStatus,
+          impressions: row.impressions,
+          clicks: row.clicks,
+          costMicros: row.costMicros,
+          conversions: row.conversions,
+          conversionsValue: row.conversionsValue,
+        }))
+      ).then(result => {
+        console.log(`[API] Stored ${result.rowsWritten} daily rows (${result.datesWritten.join(', ')})`);
+      }).catch(err => console.error('[API] Failed to cache daily metrics:', err));
+
+      // Also update EntityHierarchy for name/status lookups
+      const uniqueCampaigns = new Map<string, { name: string; status: string; type: string }>();
+      for (const row of dailyData) {
+        if (!uniqueCampaigns.has(row.campaignId)) {
+          uniqueCampaigns.set(row.campaignId, {
+            name: row.campaignName,
+            status: row.campaignStatus,
+            type: row.campaignType,
+          });
+        }
+      }
+
+      // Store hierarchy entries (background)
+      Promise.all(
+        Array.from(uniqueCampaigns.entries()).map(([campaignId, info]) =>
+          prisma.entityHierarchy.upsert({
+            where: {
+              customerId_entityType_entityId: {
+                customerId: googleAdsAccount.googleAccountId,
+                entityType: EntityType.CAMPAIGN,
+                entityId: campaignId,
+              },
+            },
+            create: {
+              customerId: googleAdsAccount.googleAccountId,
+              entityType: EntityType.CAMPAIGN,
+              entityId: campaignId,
+              entityName: info.name,
+              status: info.status,
+              campaignType: info.type,
+              accountId: googleAdsAccount.id,
+            },
+            update: {
+              entityName: info.name,
+              status: info.status,
+              campaignType: info.type,
+              lastUpdated: new Date(),
+            },
+          })
+        )
+      ).catch(err => console.error('[API] Failed to update entity hierarchy:', err));
+
+      // Aggregate daily data to build campaign response
+      const campaignMetrics = new Map<string, {
+        name: string;
+        status: string;
+        type: string;
+        impressions: number;
+        clicks: number;
+        cost: number;
+        conversions: number;
+        conversionValue: number;
+      }>();
+
+      for (const row of dailyData) {
+        const existing = campaignMetrics.get(row.campaignId) || {
+          name: row.campaignName,
+          status: row.campaignStatus,
+          type: row.campaignType,
+          impressions: 0,
+          clicks: 0,
+          cost: 0,
+          conversions: 0,
+          conversionValue: 0,
+        };
+
+        campaignMetrics.set(row.campaignId, {
+          ...existing,
+          impressions: existing.impressions + row.impressions,
+          clicks: existing.clicks + row.clicks,
+          cost: existing.cost + row.costMicros / 1_000_000,
+          conversions: existing.conversions + row.conversions,
+          conversionValue: existing.conversionValue + row.conversionsValue,
+        });
+      }
+
+      // Build campaign objects
+      campaigns = Array.from(campaignMetrics.entries()).map(([campaignId, metrics]) => {
+        const ctr = metrics.impressions > 0 ? (metrics.clicks / metrics.impressions) * 100 : 0;
+        const cpa = metrics.conversions > 0 ? metrics.cost / metrics.conversions : 0;
+        const roas = metrics.cost > 0 ? metrics.conversionValue / metrics.cost : 0;
+
+        return {
+          id: campaignId,
+          name: metrics.name,
+          status: metrics.status,
+          type: metrics.type,
+          spend: metrics.cost,
+          clicks: metrics.clicks,
+          impressions: metrics.impressions,
+          conversions: metrics.conversions,
+          conversionValue: metrics.conversionValue,
+          ctr,
+          cpa,
+          roas,
+          aiScore: Math.floor(Math.random() * 30) + 70, // Placeholder
+        };
+      });
     }
 
     // Update last sync time (only on API fetch)
@@ -280,19 +424,182 @@ export async function GET(request: NextRequest) {
       ? new Date(Math.min(...cachedMetrics.map(m => m.syncedAt.getTime())))
       : null;
 
-    // Return data with comprehensive metadata
+    // Analyze date range for detailed source information
+    let dateRangeAnalysis = null;
+    let sourceDetails = null;
+    if (isEnabled('DATE_RANGE_ANALYSIS')) {
+      try {
+        dateRangeAnalysis = await analyzeDateRange(
+          googleAdsAccount.googleAccountId,
+          EntityType.CAMPAIGN,
+          startDate,
+          endDate
+        );
+        sourceDetails = getSourceDetails(dateRangeAnalysis);
+      } catch (err) {
+        console.warn('[API] Date range analysis failed:', err);
+      }
+    }
+
+    // Run sampled hierarchy validation (5% of queries, warn-only)
+    // Triggers on both cache hits and API fetches (write-through)
+    let hierarchyValidation = null;
+    const shouldValidate = isEnabled('HIERARCHY_VALIDATION') && Math.random() < HIERARCHY_VALIDATION_SAMPLE_RATE;
+    const trigger = dataSource === 'cache' ? 'cache_hit' : 'refresh';
+
+    if (shouldValidate) {
+      try {
+        const validationResult = await validateCampaignHierarchy(
+          googleAdsAccount.googleAccountId,
+          startDate,
+          endDate,
+          HIERARCHY_VARIANCE_TOLERANCE,
+          trigger  // Pass trigger for persistence
+        );
+
+        if (validationResult.validated) {
+          const worstVariance = validationResult.mismatches.length > 0
+            ? Math.max(...validationResult.mismatches.map(m => m.variance))
+            : 0;
+
+          const severity: 'ok' | 'warning' | 'error' =
+            validationResult.mismatches.some(m => m.severity === 'error') ? 'error' :
+            validationResult.mismatches.length > 0 ? 'warning' : 'ok';
+
+          hierarchyValidation = {
+            validated: true,
+            hasIssues: validationResult.mismatches.length > 0,
+            sampledEntities: validationResult.sampledEntities,
+            issueCount: validationResult.mismatches.length,
+            worstVariance,
+            severity,
+            sampleMismatches: validationResult.mismatches.slice(0, 3).map(m => ({
+              entityName: m.entityName,
+              metric: m.metric,
+              variance: m.variance,
+            })),
+            trigger,
+            persistedEvents: validationResult.persistedEvents,
+          };
+
+          if (hierarchyValidation.hasIssues) {
+            console.warn(
+              `[API] Hierarchy validation issues (${trigger}) for ${googleAdsAccount.googleAccountId}:`,
+              `${hierarchyValidation.issueCount} mismatches, worst variance: ${worstVariance.toFixed(1)}%`
+            );
+          }
+        }
+      } catch (err) {
+        console.warn('[API] Hierarchy validation failed:', err);
+      }
+    }
+
+    // Extract actual dates covered from metrics for accurate coverage reporting
+    const actualDates = extractDatesFromMetrics(cachedMetrics);
+
+    // Build cache key with ALL parameters for debugging
+    const fullCacheKey = createQueryCacheKey({
+      customerId: googleAdsAccount.googleAccountId,
+      entityType: 'CAMPAIGN',
+      startDate,
+      endDate,
+      timezone: queryContext.timezone,
+      conversionMode: queryContext.conversionMode,
+      includeToday: queryContext.includeToday,
+    });
+
+    // Build comprehensive query metadata
+    const queryMeta = buildQueryMeta(
+      queryContext,
+      actualDates,
+      dataSource,
+      fullCacheKey
+    );
+
+    // Build provenance data for debugging cache correctness
+    // This shows exactly where data came from and what was written
+    const provenance = {
+      dbDaysCovered: actualDates,
+      apiDaysCovered: dataSource === 'api' ? actualDates : [],
+      missingDays: queryMeta.missingDays,
+      wroteToDb: dataSource === 'api',
+      wroteGranularity: dataSource === 'api' ? 'daily' : null,
+      // Critical invariant check: Yesterday preset must have exactly 1 day
+      yesterdayInvariantValid: preset !== 'yesterday' || (
+        queryMeta.datesCovered.count === 1 ||
+        (startDate === endDate)
+      ),
+    };
+
+    // Smart Pre-warm: Queue ad groups fetch for top campaigns (opt-in feature)
+    let prewarmStatus = null;
+    if (isEnabled('SMART_PREWARM') && campaigns.length > 0 && googleOAuthAccount?.refresh_token) {
+      // Fire-and-forget: don't block response
+      smartPrewarmAdGroups(
+        campaigns.map(c => ({ id: c.id, name: c.name, spend: c.spend, status: c.status })),
+        {
+          refreshToken: googleOAuthAccount.refresh_token,
+          accountId: googleAdsAccount.id,
+          customerId: googleAdsAccount.googleAccountId,
+          parentManagerId: googleAdsAccount.parentManagerId || undefined,
+          startDate,
+          endDate,
+        }
+      ).then(result => {
+        if (result.triggered) {
+          console.log(`[API] Smart pre-warm triggered for ${result.campaignsQueued.length} campaigns`);
+        }
+        prewarmStatus = result;
+      }).catch(err => {
+        console.warn('[API] Smart pre-warm failed:', err);
+      });
+    }
+
+    // Return data with comprehensive metadata including source breakdown
     return NextResponse.json({
       campaigns,
       _meta: {
+        // Query context - echoes exactly what the server used
+        queryContext: queryMeta.queryContext,
+
+        // Date coverage - what data we actually have
+        datesCovered: queryMeta.datesCovered,
+        missingDays: queryMeta.missingDays,
+
+        // Warnings (partial coverage, validation failures, etc.)
+        warnings: queryMeta.warnings,
+
+        // Data source information
         source: dataSource,
+        sourceLabel: sourceDetails?.label || (dataSource === 'cache' ? 'DB Cache' : 'Google Ads API'),
+        sourceDetails: sourceDetails ? {
+          dbRange: sourceDetails.dbRange,
+          apiRange: sourceDetails.apiRange,
+          dbDays: sourceDetails.dbDays,
+          apiDays: sourceDetails.apiDays,
+        } : null,
+
+        // Cache metadata
+        cacheKey: fullCacheKey,
         ageSeconds: cacheAge === Infinity ? null : Math.round(cacheAge / 1000),
         lastSyncedAt: oldestSyncDate?.toISOString() || null,
         refreshing: refreshInProgress,
-        query: {
-          customerId: googleAdsAccount.googleAccountId,
-          startDate,
-          endDate,
-        },
+        pendingApiChunks: dateRangeAnalysis?.missingRange.chunks.length || 0,
+
+        // Legacy coverage (for backwards compatibility)
+        coverage: dateRangeAnalysis ? {
+          percentCached: dateRangeAnalysis.summary.percentCached,
+          percentMissing: dateRangeAnalysis.summary.percentMissing,
+          totalDays: dateRangeAnalysis.requestedRange.totalDays,
+        } : null,
+
+        // Provenance - debug-only data showing exact data flow
+        provenance,
+
+        // Hierarchy validation
+        hierarchyValidation,
+
+        // Execution timestamp
         executedAt: new Date().toISOString(),
       },
     });
@@ -422,98 +729,6 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-/**
- * Store campaign metrics in MetricsFact table for caching
- */
-async function storeCampaignMetrics(
-  accountId: string,
-  customerId: string,
-  campaigns: Array<{
-    id: string;
-    name: string;
-    status: string;
-    type?: string;
-    spend: number;
-    clicks: number;
-    impressions: number;
-    conversions: number;
-    conversionValue?: number;
-  }>,
-  endDate: string
-): Promise<void> {
-  const dataFreshness = isToday(parseISO(endDate))
-    ? DataFreshness.PARTIAL
-    : DataFreshness.FINAL;
-
-  for (const campaign of campaigns) {
-    // Store in MetricsFact (aggregated for now - single row per campaign)
-    await prisma.metricsFact.upsert({
-      where: {
-        customerId_entityType_entityId_date: {
-          customerId,
-          entityType: EntityType.CAMPAIGN,
-          entityId: campaign.id,
-          date: new Date(endDate),
-        },
-      },
-      create: {
-        customerId,
-        entityType: EntityType.CAMPAIGN,
-        entityId: campaign.id,
-        date: new Date(endDate),
-        impressions: BigInt(campaign.impressions || 0),
-        clicks: BigInt(campaign.clicks || 0),
-        costMicros: BigInt(Math.round((campaign.spend || 0) * 1_000_000)),
-        conversions: new Prisma.Decimal(campaign.conversions || 0),
-        conversionsValue: new Prisma.Decimal(campaign.conversionValue || 0),
-        ctr: new Prisma.Decimal(campaign.impressions > 0 ? campaign.clicks / campaign.impressions : 0),
-        averageCpc: new Prisma.Decimal(campaign.clicks > 0 ? campaign.spend / campaign.clicks : 0),
-        accountId,
-        dataFreshness,
-      },
-      update: {
-        impressions: BigInt(campaign.impressions || 0),
-        clicks: BigInt(campaign.clicks || 0),
-        costMicros: BigInt(Math.round((campaign.spend || 0) * 1_000_000)),
-        conversions: new Prisma.Decimal(campaign.conversions || 0),
-        conversionsValue: new Prisma.Decimal(campaign.conversionValue || 0),
-        ctr: new Prisma.Decimal(campaign.impressions > 0 ? campaign.clicks / campaign.impressions : 0),
-        averageCpc: new Prisma.Decimal(campaign.clicks > 0 ? campaign.spend / campaign.clicks : 0),
-        dataFreshness,
-        syncedAt: new Date(),
-      },
-    });
-
-    // Store in EntityHierarchy for name/status/type lookup
-    await prisma.entityHierarchy.upsert({
-      where: {
-        customerId_entityType_entityId: {
-          customerId,
-          entityType: EntityType.CAMPAIGN,
-          entityId: campaign.id,
-        },
-      },
-      create: {
-        customerId,
-        entityType: EntityType.CAMPAIGN,
-        entityId: campaign.id,
-        entityName: campaign.name,
-        status: campaign.status,
-        campaignType: campaign.type || null,
-        accountId,
-      },
-      update: {
-        entityName: campaign.name,
-        status: campaign.status,
-        campaignType: campaign.type || null,
-        lastUpdated: new Date(),
-      },
-    });
-  }
-
-  console.log(`[Cache] Stored ${campaigns.length} campaigns in MetricsFact`);
 }
 
 // PATCH /api/google-ads/campaigns - Update an existing campaign

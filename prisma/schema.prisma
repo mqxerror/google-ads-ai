@@ -182,21 +182,27 @@ model ActivityLog {
 model SavedView {
   id         String   @id @default(cuid())
   userId     String
-  accountId  String
+  accountId  String?  // null = applies to all accounts for this user
   name       String
-  entityType String // "campaign" | "adgroup" | "keyword" | "ad"
-  filters    Json // Filter configuration
-  sorting    Json // Sort configuration
-  columns    Json // Visible columns
+  entityType String   // "campaign" | "adgroup" | "keyword" | "ad"
+  filters    Json     // Filter configuration: { status: [], type: [], spend: { min, max }, etc. }
+  sorting    Json     // Sort configuration: { field: string, direction: 'asc' | 'desc' }
+  columns    Json     // Visible columns: string[]
+  datePreset String?  // "yesterday" | "last7days" | "last30days" | "thisMonth" | etc.
   isDefault  Boolean  @default(false)
+  isPinned   Boolean  @default(false)  // Pin to quick access
+  icon       String?  // Emoji or icon name for visual identification
+  color      String?  // Hex color for visual identification
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account GoogleAdsAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account GoogleAdsAccount? @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, accountId, name, entityType])  // Prevent duplicate names per user/account/entity
   @@index([userId])
   @@index([accountId])
+  @@index([userId, entityType])
 }
 
 model UserSettings {
@@ -458,4 +464,54 @@ model RefreshJobLog {
   @@index([jobId])
 
   @@map("refresh_job_log")
+}
+
+// ============================================================================
+// HIERARCHY VALIDATION - Data Integrity Monitoring
+// ============================================================================
+
+/// HierarchyMismatchEvent - Persists validation mismatches for trend analysis
+model HierarchyMismatchEvent {
+  id              String    @id @default(cuid())
+  customerId      String    // Google Ads Customer ID
+
+  // What triggered the validation
+  trigger         String    // 'cache_hit' | 'refresh' | 'manual' | 'scheduled'
+
+  // Query context for reproducibility
+  startDate       String    // Query start date
+  endDate         String    // Query end date
+  timezone        String    @default("UTC")
+
+  // Mismatch details
+  entityType      EntityType
+  entityId        String
+  entityName      String
+  metric          String    // 'spend' | 'clicks' | 'impressions' | 'conversions'
+
+  // Values (all stored as Decimal for precision)
+  parentValue     Decimal   @db.Decimal(18, 6)  // Campaign-level value
+  childSum        Decimal   @db.Decimal(18, 6)  // SUM(ad group values)
+  absoluteDiff    Decimal   @db.Decimal(18, 6)  // |parent - childSum|
+  variancePercent Decimal   @db.Decimal(10, 4)  // Percentage variance
+
+  // Severity classification
+  severity        String    // 'warning' | 'error'
+
+  // Sampling metadata
+  sampledEntities Int       // How many entities were sampled
+  sampleRate      Decimal   @db.Decimal(5, 4) @default(0.05) // 5% default
+
+  // Status tracking
+  acknowledged    Boolean   @default(false)  // User dismissed this warning
+  resolvedAt      DateTime? // When the issue was resolved (if ever)
+
+  createdAt       DateTime  @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([customerId, entityType, createdAt])
+  @@index([severity, createdAt])
+  @@index([acknowledged])
+
+  @@map("hierarchy_mismatch_event")
 }
