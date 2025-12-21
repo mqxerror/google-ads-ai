@@ -43,6 +43,8 @@ import { HierarchyValidationSummary } from '@/lib/cache/hybrid-fetch';
 import { WhatChangedPanel } from '@/components/WhatChanged';
 import { useCompareMode } from '@/contexts/CompareModeContext';
 import { useComparisonData } from '@/hooks/useComparisonData';
+import { useAIDock } from '@/contexts/AIDockContext';
+import { MiniDock } from '@/components/AIDock';
 
 // Cache metadata type from API response
 interface CacheMeta {
@@ -131,9 +133,10 @@ export default function SmartGrid() {
   const [budgetCampaign, setBudgetCampaign] = useState<Campaign | null>(null);
   const [isBudgetReallocationOpen, setIsBudgetReallocationOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isAIDockOpen, setIsAIDockOpen] = useState(false);
-  const [dockCampaign, setDockCampaign] = useState<Campaign | null>(null);
-  const [dockIssue, setDockIssue] = useState<CampaignIssue | null>(null);
+  // AI Dock - event-driven via context
+  const { isOpen: isAIDockOpen, context: dockContext, openDock, closeDock, triggerFromIssue } = useAIDock();
+  const dockCampaign = dockContext?.campaign || null;
+  const dockIssue = dockContext?.issue || null;
   const [isWhatChangedOpen, setIsWhatChangedOpen] = useState(false);
 
   // Compare Mode
@@ -940,10 +943,7 @@ export default function SmartGrid() {
                 Optimize
               </button>
               <button
-                onClick={() => {
-                  setDockCampaign(null);
-                  setIsAIDockOpen(true);
-                }}
+                onClick={() => openDock({ trigger: 'manual' })}
                 className="btn-primary h-8 px-3 text-[13px]"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1157,18 +1157,13 @@ export default function SmartGrid() {
         campaigns={campaigns}
       />
 
-      {/* AI Dock - unified AI interface */}
+      {/* AI Dock - unified AI interface (event-driven via context) */}
       <AIDock
-        isOpen={isAIDockOpen}
-        onClose={() => {
-          setIsAIDockOpen(false);
-          setDockCampaign(null);
-          setDockIssue(null);
-        }}
-        campaign={dockCampaign}
-        issue={dockIssue}
         selectedCampaigns={selectedIds.size > 1 ? campaigns.filter(c => selectedIds.has(c.id)) : undefined}
       />
+
+      {/* Mini AI Dock - always visible when dock is closed with context */}
+      <MiniDock />
 
       {/* What Changed Panel - daily workflow surface */}
       <WhatChangedPanel

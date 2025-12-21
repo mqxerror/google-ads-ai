@@ -1,17 +1,19 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Campaign } from '@/types/campaign';
 import { CampaignIssue, RecommendedFix } from '@/types/health';
 import { useActionQueue } from '@/contexts/ActionQueueContext';
+import { useAIDock, DockTrigger } from '@/contexts/AIDockContext';
 import { QueuedAction } from '@/types/action-queue';
 
 type AddActionInput = Omit<QueuedAction, 'id' | 'status' | 'createdAt' | 'riskLevel'> & { aiScore?: number };
 
 interface AIDockProps {
-  isOpen: boolean;
-  onClose: () => void;
-  campaign: Campaign | null;
+  // Legacy props for backward compatibility
+  isOpen?: boolean;
+  onClose?: () => void;
+  campaign?: Campaign | null;
   issue?: CampaignIssue | null;
   selectedCampaigns?: Campaign[];
   initialTab?: TabId;
@@ -19,10 +21,61 @@ interface AIDockProps {
 
 type TabId = 'explain' | 'fix' | 'plan';
 
-export default function AIDock({ isOpen, onClose, campaign, issue, selectedCampaigns, initialTab }: AIDockProps) {
-  const defaultTab = useMemo(() => initialTab || (issue ? 'fix' : 'explain'), [initialTab, issue]);
-  const [activeTab, setActiveTab] = useState<TabId>(defaultTab);
+// Helper to determine initial tab based on trigger
+function getInitialTabFromTrigger(trigger: DockTrigger): TabId {
+  switch (trigger) {
+    case 'issue_click':
+    case 'wasted_spend':
+      return 'fix';
+    case 'opportunity':
+      return 'plan';
+    default:
+      return 'explain';
+  }
+}
+
+export default function AIDock({
+  isOpen: legacyIsOpen,
+  onClose: legacyOnClose,
+  campaign: legacyCampaign,
+  issue: legacyIssue,
+  selectedCampaigns,
+  initialTab
+}: AIDockProps) {
+  const {
+    isOpen: contextIsOpen,
+    context,
+    closeDock,
+    setMode
+  } = useAIDock();
   const { addAction } = useActionQueue();
+
+  // Use context if available, fall back to legacy props
+  const isOpen = legacyIsOpen ?? contextIsOpen;
+  const campaign = legacyCampaign ?? context?.campaign ?? null;
+  const issue = legacyIssue ?? context?.issue ?? null;
+  const onClose = legacyOnClose ?? closeDock;
+  const trigger = context?.trigger ?? 'manual';
+
+  // Determine default tab based on trigger or initialTab
+  const defaultTab = useMemo(() => {
+    if (initialTab) return initialTab;
+    if (context?.trigger) return getInitialTabFromTrigger(context.trigger);
+    return issue ? 'fix' : 'explain';
+  }, [initialTab, issue, context?.trigger]);
+
+  const [activeTab, setActiveTab] = useState<TabId>(defaultTab);
+
+  // Reset tab when context changes
+  useEffect(() => {
+    setActiveTab(defaultTab);
+  }, [defaultTab, context]);
+
+  // Handle close - set mode to mini instead of hidden to show mini dock
+  const handleClose = () => {
+    setMode('mini');
+    onClose();
+  };
 
   if (!isOpen) return null;
 
@@ -38,7 +91,7 @@ export default function AIDock({ isOpen, onClose, campaign, issue, selectedCampa
   return (
     <>
       {/* Backdrop */}
-      <div className="fixed inset-0 z-40 bg-black/10" onClick={onClose} />
+      <div className="fixed inset-0 z-40 bg-black/10" onClick={handleClose} />
 
       {/* Dock Panel - Apple style */}
       <div className="fixed right-0 top-0 z-50 h-full w-[420px] apple-dock flex flex-col animate-slideIn">
@@ -61,7 +114,7 @@ export default function AIDock({ isOpen, onClose, campaign, issue, selectedCampa
               </div>
             </div>
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="btn-icon"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

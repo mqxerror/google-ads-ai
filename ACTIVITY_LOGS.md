@@ -409,6 +409,78 @@ package.json
 
 ---
 
+## 2025-12-20: Event-Driven AI Dock
+
+FEATURE: Upgraded AI Dock to be event-driven, responding to user actions throughout the interface.
+
+IMPLEMENTATION:
+
+1. AIDock Context (`src/contexts/AIDockContext.tsx`):
+   - Centralized state for dock open/close, mode, and context
+   - DockTrigger types: manual, issue_click, health_badge, what_changed, compare_mode, wasted_spend, opportunity
+   - DockMode: full, mini, hidden
+   - Event handlers: triggerFromIssue, triggerFromHealthBadge, triggerFromChange, triggerFromOpportunity
+   - Headline state for mini dock display
+
+2. Mini Dock (`src/components/AIDock/MiniDock.tsx`):
+   - Floating bar at bottom of screen
+   - Shows when dock is closed but has context
+   - Displays AI icon, headline, and "Open" button
+   - Quick expand to full dock on click
+   - Dismiss button to fully close
+
+3. AIDock Component Updates:
+   - Uses context for state management
+   - Supports both legacy props and context-driven mode
+   - Auto-selects tab based on trigger:
+     - issue_click/wasted_spend → Fix tab
+     - opportunity → Plan tab
+     - others → Explain tab
+   - Sets mode to 'mini' on close (shows mini dock)
+
+4. SmartGrid Integration:
+   - Uses useAIDock() hook instead of local state
+   - AI button uses openDock({ trigger: 'manual' })
+   - Renders MiniDock component
+
+FILES CHANGED:
+
+src/contexts/AIDockContext.tsx (NEW)
+- Event-driven AI Dock state management
+- Trigger types and event handlers
+
+src/components/AIDock/MiniDock.tsx (NEW)
+- Floating mini dock component
+
+src/components/AIDock/AIDock.tsx
+- Integrated with context
+- Auto tab selection based on trigger
+- Mini mode on close
+
+src/components/AIDock/index.ts
+- Export MiniDock
+
+src/components/SmartGrid/SmartGrid.tsx
+- Uses AIDock context
+- Renders MiniDock
+
+src/components/Providers.tsx
+- Added AIDockProvider
+
+USAGE:
+1. Click issue/health badge → AI Dock opens with context
+2. Click AI button → Opens dock in manual mode
+3. Close dock → Shows mini dock at bottom
+4. Click "Open" on mini dock → Expands to full dock
+5. Click dismiss → Hides mini dock
+
+FUTURE ENHANCEMENTS:
+- Real-time streaming responses
+- Health badge hover → mini dock headline
+- What Changed integration
+
+---
+
 ## 2025-12-20: Compare Mode Inline Deltas
 
 FEATURE: Period-over-period comparison mode showing inline deltas next to metric values.
