@@ -40,6 +40,7 @@ import DataStalenessBanner from '@/components/ui/DataStalenessBanner';
 import DataFreshnessStrip, { useDataFreshness } from '@/components/ui/DataFreshnessStrip';
 import DataIntegrityChip from '@/components/ui/DataIntegrityChip';
 import { HierarchyValidationSummary } from '@/lib/cache/hybrid-fetch';
+import { WhatChangedPanel } from '@/components/WhatChanged';
 
 // Cache metadata type from API response
 interface CacheMeta {
@@ -131,6 +132,7 @@ export default function SmartGrid() {
   const [isAIDockOpen, setIsAIDockOpen] = useState(false);
   const [dockCampaign, setDockCampaign] = useState<Campaign | null>(null);
   const [dockIssue, setDockIssue] = useState<CampaignIssue | null>(null);
+  const [isWhatChangedOpen, setIsWhatChangedOpen] = useState(false);
 
   // Cache metadata for freshness indicator
   const [cacheMeta, setCacheMeta] = useState<CacheMeta | null>(null);
@@ -890,6 +892,16 @@ export default function SmartGrid() {
           {currentLevel === 'campaigns' && campaigns.length > 0 && (
             <>
               <button
+                onClick={() => setIsWhatChangedOpen(true)}
+                className="btn-secondary h-8 px-3 text-[13px]"
+                title="What Changed - See recent changes and anomalies"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                </svg>
+                Changes
+              </button>
+              <button
                 onClick={() => setIsBudgetReallocationOpen(true)}
                 className="btn-secondary h-8 px-3 text-[13px]"
                 title="Budget Reallocation"
@@ -1109,6 +1121,12 @@ export default function SmartGrid() {
         campaign={dockCampaign}
         issue={dockIssue}
         selectedCampaigns={selectedIds.size > 1 ? campaigns.filter(c => selectedIds.has(c.id)) : undefined}
+      />
+
+      {/* What Changed Panel - daily workflow surface */}
+      <WhatChangedPanel
+        isOpen={isWhatChangedOpen}
+        onClose={() => setIsWhatChangedOpen(false)}
       />
       </div>
 

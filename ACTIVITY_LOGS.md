@@ -409,6 +409,77 @@ package.json
 
 ---
 
+## 2025-12-20: What Changed Feature (Daily Workflow Surface)
+
+FEATURE: What Changed panel - daily workflow surface showing budget/bid changes, metric deltas, anomalies, and wasted spend with actionable options.
+
+IMPLEMENTATION:
+
+1. Backend API (`GET /api/changes`):
+   - Compares last 7 days vs prior 7 days
+   - Detects spend spikes/drops (30%+ / 20%+)
+   - Detects CPA spikes (25%+ = warning, 40%+ = critical)
+   - Detects conversion drops/spikes (20%+ / 30%+)
+   - Detects CTR drops (15%+)
+   - Detects wasted spend ($100+ with 0 conversions)
+   - Identifies scaling opportunities (CPA improved 15%+ with 5+ conversions)
+   - Returns severity-sorted list (critical → warning → info → positive)
+
+2. Types (`src/types/changes.ts`):
+   - ChangeCategory: budget, bidding, status, metric_spike, metric_drop, anomaly, wasted_spend, opportunity
+   - ChangeSeverity: critical, warning, info, positive
+   - ChangeItem: full change data with entity info, metrics, actions
+   - CHANGE_THRESHOLDS: configurable detection sensitivity
+
+3. UI Component (`WhatChangedPanel`):
+   - Slide-in panel from right side
+   - Summary bar with critical/warning/positive counts
+   - Expandable change cards with severity-based styling
+   - Delta badges showing percentage change
+   - Three actions per item:
+     - Queue Fix: Adds to ActionQueue (pause, adjust budget, etc.)
+     - Explain: Generates AI analysis (mock for now)
+     - Ignore: Dismisses the alert
+   - Integrated with ActionQueueContext for fix queuing
+
+4. SmartGrid Integration:
+   - "Changes" button in control bar (next to Optimize)
+   - Opens WhatChangedPanel when clicked
+   - Only shows at campaign level when campaigns exist
+
+FILES CHANGED:
+
+src/types/changes.ts (NEW)
+- Change detection types and thresholds
+
+src/app/api/changes/route.ts (NEW)
+- GET endpoint for change detection
+- Period comparison logic
+- Severity classification
+
+src/components/WhatChanged/WhatChangedPanel.tsx (NEW)
+- Full panel UI with actions
+- AI explanation generation (mock)
+- ActionQueue integration
+
+src/components/WhatChanged/index.ts (NEW)
+- Barrel export
+
+src/components/SmartGrid/SmartGrid.tsx
+- Import WhatChangedPanel
+- Add isWhatChangedOpen state
+- Add "Changes" button in control bar
+
+USAGE:
+1. Click "Changes" button in campaign grid control bar
+2. View detected changes sorted by severity
+3. Click item to expand and see details
+4. Click "Queue Fix" to add action to queue
+5. Click "Explain" for AI analysis
+6. Click "Ignore" to dismiss
+
+---
+
 ## Port Configuration Note
 
 Port 4000 is for local development only.
