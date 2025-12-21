@@ -409,6 +409,82 @@ package.json
 
 ---
 
+## 2025-12-20: Compare Mode Inline Deltas
+
+FEATURE: Period-over-period comparison mode showing inline deltas next to metric values.
+
+IMPLEMENTATION:
+
+1. Compare Mode Context (`src/contexts/CompareModeContext.tsx`):
+   - isCompareMode toggle state
+   - compareConfig for period type (previous, same_last_year, custom)
+
+2. Comparison API (`GET /api/google-ads/campaigns/compare`):
+   - Accepts current period dates
+   - Automatically calculates previous period (same duration)
+   - Fetches and aggregates metrics for both periods
+   - Returns delta percentages for all key metrics:
+     - spendDelta, clicksDelta, impressionsDelta
+     - conversionsDelta, cpaDelta, ctrDelta, roasDelta
+
+3. useComparisonData Hook:
+   - Fetches comparison data when compare mode is enabled
+   - Returns comparisonMap (campaignId → comparison data)
+   - Auto-fetches when date range changes
+
+4. MetricDelta Component:
+   - Displays percentage change with arrow icon
+   - Color-coded: green for good, red for bad
+   - Supports inverted logic (for CPA where decrease is good)
+
+5. GridRow Integration:
+   - Accepts optional comparison prop
+   - Shows deltas next to Spend, Conversions, CPA columns
+   - CPA uses inverted logic (decrease = green)
+
+6. SmartGrid Updates:
+   - "Compare" toggle button in control bar
+   - Compare mode indicator strip showing comparison period
+   - Visual feedback when compare mode is active
+
+FILES CHANGED:
+
+src/types/campaign.ts
+- Added CampaignComparison interface
+
+src/contexts/CompareModeContext.tsx (NEW)
+- Compare mode state management
+
+src/app/api/google-ads/campaigns/compare/route.ts (NEW)
+- Comparison data API endpoint
+
+src/hooks/useComparisonData.ts (NEW)
+- Hook for fetching comparison data
+
+src/components/SmartGrid/MetricDelta.tsx (NEW)
+- Delta display component with color coding
+
+src/components/SmartGrid/GridRow.tsx
+- Added comparison prop and delta display
+
+src/components/SmartGrid/SmartGrid.tsx
+- Added Compare toggle button
+- Compare mode indicator strip
+- Pass comparison data to rows
+
+src/components/Providers.tsx
+- Added CompareModeProvider
+
+USAGE:
+1. Click "Compare" button in grid control bar
+2. Deltas appear next to metric values
+3. Green = good (more conversions, less CPA)
+4. Red = bad (more CPA, less conversions)
+5. Banner shows comparison period
+6. Click "Disable" or toggle button to exit
+
+---
+
 ## 2025-12-20: What Changed Feature (Daily Workflow Surface)
 
 FEATURE: What Changed panel - daily workflow surface showing budget/bid changes, metric deltas, anomalies, and wasted spend with actionable options.

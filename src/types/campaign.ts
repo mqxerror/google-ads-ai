@@ -48,6 +48,33 @@ export interface Campaign {
   budgetPacing?: BudgetPacing;
   lastChange?: LastChange;
   trends?: CampaignTrends;
+  // Compare Mode - period-over-period comparison
+  comparison?: CampaignComparison;
+}
+
+// Comparison data for period-over-period analysis
+export interface CampaignComparison {
+  // Previous period values
+  previousSpend: number;
+  previousClicks: number;
+  previousImpressions: number;
+  previousConversions: number;
+  previousCpa: number;
+  previousCtr: number;
+  previousRoas: number;
+  // Deltas (percentage change)
+  spendDelta: number;
+  clicksDelta: number;
+  impressionsDelta: number;
+  conversionsDelta: number;
+  cpaDelta: number;
+  ctrDelta: number;
+  roasDelta: number;
+  // Period info
+  comparePeriod: {
+    start: string;
+    end: string;
+  };
 }
 
 export interface AdGroup {

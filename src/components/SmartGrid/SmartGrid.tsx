@@ -41,6 +41,8 @@ import DataFreshnessStrip, { useDataFreshness } from '@/components/ui/DataFreshn
 import DataIntegrityChip from '@/components/ui/DataIntegrityChip';
 import { HierarchyValidationSummary } from '@/lib/cache/hybrid-fetch';
 import { WhatChangedPanel } from '@/components/WhatChanged';
+import { useCompareMode } from '@/contexts/CompareModeContext';
+import { useComparisonData } from '@/hooks/useComparisonData';
 
 // Cache metadata type from API response
 interface CacheMeta {
@@ -133,6 +135,14 @@ export default function SmartGrid() {
   const [dockCampaign, setDockCampaign] = useState<Campaign | null>(null);
   const [dockIssue, setDockIssue] = useState<CampaignIssue | null>(null);
   const [isWhatChangedOpen, setIsWhatChangedOpen] = useState(false);
+
+  // Compare Mode
+  const { isCompareMode, toggleCompareMode } = useCompareMode();
+  const { comparisonMap, comparePeriod, isLoading: isComparisonLoading } = useComparisonData({
+    accountId: currentAccount?.id || null,
+    startDate: dateRange?.startDate || '',
+    endDate: dateRange?.endDate || '',
+  });
 
   // Cache metadata for freshness indicator
   const [cacheMeta, setCacheMeta] = useState<CacheMeta | null>(null);
@@ -788,6 +798,7 @@ export default function SmartGrid() {
                           setIsFixPanelOpen(true);
                         }}
                         lastSyncedAt={cacheMeta?.lastSyncedAt}
+                        comparison={isCompareMode ? comparisonMap.get(campaign.id) : null}
                       />
                     ))}
                   </tbody>
@@ -902,6 +913,23 @@ export default function SmartGrid() {
                 Changes
               </button>
               <button
+                onClick={toggleCompareMode}
+                className={`h-8 px-3 text-[13px] ${
+                  isCompareMode
+                    ? 'bg-indigo-100 text-indigo-700 border border-indigo-300'
+                    : 'btn-secondary'
+                }`}
+                title={isCompareMode ? 'Disable Compare Mode' : 'Enable Compare Mode - Show period-over-period deltas'}
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                Compare
+                {isComparisonLoading && (
+                  <span className="ml-1 animate-pulse">...</span>
+                )}
+              </button>
+              <button
                 onClick={() => setIsBudgetReallocationOpen(true)}
                 className="btn-secondary h-8 px-3 text-[13px]"
                 title="Budget Reallocation"
@@ -941,6 +969,25 @@ export default function SmartGrid() {
           isRefreshing={cacheMeta.refreshing || isLoading}
           entityType="campaigns"
         />
+      )}
+
+      {/* Compare Mode Indicator */}
+      {isCompareMode && comparePeriod && (
+        <div className="border-b border-indigo-200 bg-indigo-50 px-4 py-2 flex items-center gap-2">
+          <svg className="w-4 h-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+          <span className="text-sm font-medium text-indigo-700">Compare Mode</span>
+          <span className="text-sm text-indigo-600">
+            Showing deltas vs {comparePeriod.start} → {comparePeriod.end}
+          </span>
+          <button
+            onClick={toggleCompareMode}
+            className="ml-auto text-xs text-indigo-600 hover:text-indigo-800 underline"
+          >
+            Disable
+          </button>
+        </div>
       )}
 
       {/* Error State */}

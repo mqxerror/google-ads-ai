@@ -13,6 +13,7 @@ import { PermissionsProvider } from '@/contexts/PermissionsContext';
 import { ApprovalsProvider } from '@/contexts/ApprovalsContext';
 import { UndoRedoProvider } from '@/contexts/UndoRedoContext';
 import { DashboardProvider } from '@/contexts/DashboardContext';
+import { CompareModeProvider } from '@/contexts/CompareModeContext';
 import { ToastProvider } from '@/components/Toast/ToastProvider';
 import FloatingActionQueue from '@/components/FloatingActionQueue';
 import { ReactNode, Suspense } from 'react';
@@ -26,7 +27,8 @@ export default function Providers({ children }: { children: ReactNode }) {
             <UndoRedoProvider>
               <AccountProvider>
                 <CampaignsDataProvider>
-                  <PermissionsProvider>
+                  <CompareModeProvider>
+                    <PermissionsProvider>
                     <ApprovalsProvider>
                       <GuardrailsProvider>
                         <ActionQueueProvider>
@@ -44,6 +46,7 @@ export default function Providers({ children }: { children: ReactNode }) {
                       </GuardrailsProvider>
                     </ApprovalsProvider>
                   </PermissionsProvider>
+                  </CompareModeProvider>
                 </CampaignsDataProvider>
               </AccountProvider>
             </UndoRedoProvider>

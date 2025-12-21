@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { Campaign, CampaignType } from '@/types/campaign';
+import { Campaign, CampaignType, CampaignComparison } from '@/types/campaign';
 import { CampaignIssue } from '@/types/health';
 import ScoreBreakdownPopover from './ScoreBreakdownPopover';
 import { FixDrawer } from '@/components/FixDrawer';
 import { formatCurrency, formatNumber } from '@/lib/format';
+import MetricDelta from './MetricDelta';
 
 interface GridRowProps {
   campaign: Campaign;
@@ -17,6 +18,7 @@ interface GridRowProps {
   onUpdateCampaign?: (id: string, updates: Partial<Campaign>) => void;
   onIssueClick?: (campaign: Campaign, issue: CampaignIssue) => void;
   lastSyncedAt?: string | null;
+  comparison?: CampaignComparison | null; // For compare mode
 }
 
 // Format relative time like "3m ago", "2h ago", "1d ago"
@@ -131,6 +133,7 @@ export default function GridRow({
   onUpdateCampaign,
   onIssueClick,
   lastSyncedAt,
+  comparison,
 }: GridRowProps) {
   const [showScoreBreakdown, setShowScoreBreakdown] = useState(false);
   const [showFixDrawer, setShowFixDrawer] = useState(false);
@@ -197,23 +200,34 @@ export default function GridRow({
 
       {/* Spend */}
       <td className="px-4 text-right">
-        <span className="text-[14px] font-semibold text-[var(--text)] tabular-nums">
-          {formatCurrency(campaign.spend)}
-        </span>
+        <div className="inline-flex items-center justify-end">
+          <span className="text-[14px] font-semibold text-[var(--text)] tabular-nums">
+            {formatCurrency(campaign.spend)}
+          </span>
+          {comparison && <MetricDelta delta={comparison.spendDelta} />}
+        </div>
       </td>
 
       {/* Conversions */}
       <td className="px-4 text-right">
-        <span className="text-[14px] text-[var(--text)] tabular-nums">
-          {formatNumber(campaign.conversions)}
-        </span>
+        <div className="inline-flex items-center justify-end">
+          <span className="text-[14px] text-[var(--text)] tabular-nums">
+            {formatNumber(campaign.conversions)}
+          </span>
+          {comparison && <MetricDelta delta={comparison.conversionsDelta} />}
+        </div>
       </td>
 
-      {/* CPA (Pro mode shows more metrics) */}
+      {/* CPA (Pro mode shows more metrics) - CPA decrease is good */}
       <td className="px-4 text-right">
-        <span className="text-[14px] text-[var(--text2)] tabular-nums">
-          {campaign.cpa > 0 ? formatCurrency(campaign.cpa) : '-'}
-        </span>
+        <div className="inline-flex items-center justify-end">
+          <span className="text-[14px] text-[var(--text2)] tabular-nums">
+            {campaign.cpa > 0 ? formatCurrency(campaign.cpa) : '-'}
+          </span>
+          {comparison && campaign.cpa > 0 && (
+            <MetricDelta delta={comparison.cpaDelta} invert />
+          )}
+        </div>
       </td>
 
       {/* Health Badge */}
