@@ -1,0 +1,116 @@
+{
+  "name": "Quick Ads AI - GPT Review Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "quick-ads-review",
+        "options": {}
+      },
+      "id": "webhook-receive",
+      "name": "Receive Review Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a Google Ads Expert GPT reviewing work from Claude Code AI assistant.\n\nYour role is to:\n1. Review proposed changes, plans, or completed work\n2. Identify potential issues or improvements\n3. Validate Google Ads best practices\n4. Provide actionable feedback\n\nWhen reviewing, consider:\n- Campaign structure best practices\n- Keyword match type strategy\n- Budget allocation efficiency\n- Negative keyword coverage\n- Ad copy effectiveness\n- Bidding strategy appropriateness\n- Quality Score impact\n- Conversion tracking setup\n\nProvide feedback in JSON format:\n{\n  \"approval_status\": \"APPROVED\" | \"NEEDS_REVISION\" | \"REJECTED\",\n  \"summary\": \"Brief overview\",\n  \"strengths\": [\"list of strengths\"],\n  \"concerns\": [\"list of concerns\"],\n  \"suggestions\": [\"list of suggestions\"],\n  \"priority\": \"HIGH\" | \"MEDIUM\" | \"LOW\"\n}"
+            },
+            {
+              "content": "={{ $json.body.type ? '## Work to Review\\n\\n**Type:** ' + $json.body.type + '\\n**Title:** ' + $json.body.title + '\\n\\n**Description:**\\n' + $json.body.description + '\\n\\n**Details:**\\n' + JSON.stringify($json.body.details, null, 2) : 'Please review this request: ' + JSON.stringify($json.body) }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "openai-chat",
+      "name": "GPT Review",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [500, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_OPENAI_CREDENTIAL_ID",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse GPT response to structured format\nconst response = $input.first().json.message?.content || $input.first().json.text || '';\n\nlet parsed;\ntry {\n  // Try to parse as JSON\n  const jsonMatch = response.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    parsed = {\n      approval_status: 'NEEDS_REVISION',\n      summary: response.substring(0, 200),\n      strengths: [],\n      concerns: ['Could not parse structured response'],\n      suggestions: [],\n      priority: 'MEDIUM'\n    };\n  }\n} catch (e) {\n  parsed = {\n    approval_status: 'NEEDS_REVISION',\n    summary: 'Response parsing failed',\n    strengths: [],\n    concerns: [e.message],\n    suggestions: [],\n    priority: 'HIGH',\n    raw_response: response\n  };\n}\n\nreturn {\n  ...parsed,\n  reviewed_at: new Date().toISOString(),\n  source: 'n8n-gpt-workflow'\n};"
+      },
+      "id": "parse-response",
+      "name": "Parse Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "id": "respond-webhook",
+      "name": "Return Review",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1000, 300]
+    }
+  ],
+  "connections": {
+    "Receive Review Request": {
+      "main": [
+        [
+          {
+            "node": "GPT Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT Review": {
+      "main": [
+        [
+          {
+            "node": "Parse Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response": {
+      "main": [
+        [
+          {
+            "node": "Return Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "Quick Ads AI",
+      "createdAt": "2024-12-26T00:00:00.000Z",
+      "updatedAt": "2024-12-26T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "versionId": "1"
+}
