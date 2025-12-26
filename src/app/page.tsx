@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { useSession, signOut } from 'next-auth/react';
 import { Campaign } from '@/types/campaign';
 import WhatIfDrawer from '@/components/WhatIfDrawer';
 import AIPlaybooks from '@/components/AIPlaybooks';
@@ -20,6 +21,7 @@ interface DataFreshness {
 }
 
 export default function Home() {
+  const { data: session, status } = useSession();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -33,9 +35,11 @@ export default function Home() {
   const [canSync, setCanSync] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [customerId, setCustomerId] = useState<string>('demo');
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const theme = modeThemes[mode];
+  const isAuthenticated = status === 'authenticated' && session?.user;
 
   // Fetch campaigns on load
   useEffect(() => {
@@ -299,6 +303,28 @@ export default function Home() {
             )}
 
             <ModeSwitcher mode={mode} onModeChange={setMode} />
+
+            {/* User Menu */}
+            {isAuthenticated ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-text2 hidden sm:inline">
+                  {session.user?.email}
+                </span>
+                <button
+                  onClick={() => signOut()}
+                  className="px-3 py-1.5 text-xs rounded-lg font-medium bg-surface2 text-text2 hover:bg-divider transition-colors"
+                >
+                  Sign Out
+                </button>
+              </div>
+            ) : (
+              <a
+                href="/login"
+                className="px-3 py-1.5 text-xs rounded-lg font-medium bg-accent text-white hover:bg-accent-hover transition-colors"
+              >
+                Sign In
+              </a>
+            )}
           </div>
         </div>
 
