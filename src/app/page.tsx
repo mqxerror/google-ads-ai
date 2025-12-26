@@ -2,6 +2,10 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Campaign } from '@/types/campaign';
+import WhatIfDrawer from '@/components/WhatIfDrawer';
+import AIPlaybooks from '@/components/AIPlaybooks';
+import ModeSwitcher, { modeThemes } from '@/components/ModeSwitcher';
+import { InfoTooltip } from '@/components/Tooltip';
 
 interface Message {
   id: string;
@@ -15,7 +19,12 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [mode, setMode] = useState<'monitor' | 'build'>('monitor');
+  const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
+  const [showWhatIf, setShowWhatIf] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const theme = modeThemes[mode];
 
   // Fetch campaigns on load
   useEffect(() => {
@@ -157,124 +166,202 @@ export default function Home() {
     }
   }
 
+  function handleScoreClick(campaign: Campaign) {
+    setSelectedCampaign(campaign);
+    setShowWhatIf(true);
+  }
+
+  function handlePlaybookAction(action: string, affectedCampaigns: Campaign[]) {
+    console.log('Executing playbook:', action, affectedCampaigns);
+    // Implementation would go here
+    if (action === 'pause-wasters') {
+      affectedCampaigns.forEach(c => toggleCampaignStatus(c));
+    }
+  }
+
+  // Calculate stats
+  const totalSpend = campaigns.reduce((sum, c) => sum + c.spend, 0);
+  const totalConversions = campaigns.reduce((sum, c) => sum + c.conversions, 0);
+  const activeCampaigns = campaigns.filter(c => c.status === 'ENABLED').length;
+  const avgScore = Math.round(campaigns.reduce((sum, c) => sum + c.aiScore, 0) / Math.max(campaigns.length, 1));
+  const wasters = campaigns.filter(c => c.aiScore < 40 && c.status === 'ENABLED');
+  const potentialSavings = wasters.reduce((sum, c) => sum + c.spend, 0) * 0.3;
+
   return (
-    <div className="min-h-screen flex">
+    <div className={`min-h-screen flex bg-gradient-to-b ${theme.headerBg}`}>
       {/* Left: Campaign List */}
       <div className="flex-1 p-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-text">Quick Ads AI</h1>
-          <p className="text-text2">Fast, AI-powered Google Ads management</p>
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-semibold text-text">Quick Ads AI</h1>
+            <p className="text-text2">Stop wasting spend. Grow what works.</p>
+          </div>
+          <ModeSwitcher mode={mode} onModeChange={setMode} />
         </div>
 
-        {/* Stats Summary */}
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          <StatCard
-            label="Total Spend"
-            value={`$${campaigns.reduce((sum, c) => sum + c.spend, 0).toLocaleString()}`}
-          />
-          <StatCard
-            label="Conversions"
-            value={campaigns.reduce((sum, c) => sum + c.conversions, 0).toLocaleString()}
-          />
-          <StatCard
-            label="Active"
-            value={campaigns.filter(c => c.status === 'ENABLED').length.toString()}
-          />
-          <StatCard
-            label="Avg AI Score"
-            value={Math.round(campaigns.reduce((sum, c) => sum + c.aiScore, 0) / Math.max(campaigns.length, 1)).toString()}
-          />
-        </div>
+        {/* Mode-specific content */}
+        {mode === 'monitor' ? (
+          <>
+            {/* Stats Summary */}
+            <div className="grid grid-cols-5 gap-4 mb-6">
+              <StatCard
+                label="Total Spend"
+                value={`$${totalSpend.toLocaleString()}`}
+                icon="💰"
+              />
+              <StatCard
+                label="Conversions"
+                value={totalConversions.toLocaleString()}
+                icon="🎯"
+              />
+              <StatCard
+                label="Active"
+                value={activeCampaigns.toString()}
+                sublabel={`of ${campaigns.length}`}
+                icon="✅"
+              />
+              <StatCard
+                label="Avg AI Score"
+                value={avgScore.toString()}
+                icon="🤖"
+                highlight={avgScore >= 70 ? 'success' : avgScore >= 40 ? 'warning' : 'danger'}
+              />
+              <StatCard
+                label="Potential Savings"
+                value={`$${potentialSavings.toFixed(0)}/mo`}
+                icon="💡"
+                highlight="success"
+                tooltip="Estimated savings from pausing low-performing campaigns (AI Score < 40). Based on 30% of current spend on waster campaigns."
+              />
+            </div>
 
-        {/* Campaign Table */}
-        <div className="card overflow-hidden">
-          {loading ? (
-            <div className="p-8 text-center text-text2">Loading campaigns...</div>
-          ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-divider bg-surface2">
-                  <th className="text-left p-4 text-xs font-semibold text-text2 uppercase">Campaign</th>
-                  <th className="text-right p-4 text-xs font-semibold text-text2 uppercase">Spend</th>
-                  <th className="text-right p-4 text-xs font-semibold text-text2 uppercase">Conv</th>
-                  <th className="text-right p-4 text-xs font-semibold text-text2 uppercase">CTR</th>
-                  <th className="text-right p-4 text-xs font-semibold text-text2 uppercase">CPA</th>
-                  <th className="text-right p-4 text-xs font-semibold text-text2 uppercase">AI Score</th>
-                  <th className="text-center p-4 text-xs font-semibold text-text2 uppercase">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {campaigns.map(campaign => (
-                  <tr
-                    key={campaign.id}
-                    className="border-b border-divider hover:bg-surface2 transition-colors"
-                  >
-                    <td className="p-4">
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`w-2 h-2 rounded-full ${
-                            campaign.status === 'ENABLED' ? 'bg-success' : 'bg-text3'
-                          }`}
-                        />
-                        <div>
-                          <div className="font-medium text-text">{campaign.name}</div>
-                          <div className="text-xs text-text3">{campaign.type}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="p-4 text-right tabular-nums text-text">
-                      ${campaign.spend.toLocaleString()}
-                    </td>
-                    <td className="p-4 text-right tabular-nums text-text">
-                      {campaign.conversions}
-                    </td>
-                    <td className="p-4 text-right tabular-nums text-text">
-                      {campaign.ctr.toFixed(2)}%
-                    </td>
-                    <td className="p-4 text-right tabular-nums text-text">
-                      ${campaign.cpa.toFixed(2)}
-                    </td>
-                    <td className="p-4 text-right">
-                      <span
-                        className={`inline-flex items-center justify-center w-10 h-6 rounded-full text-xs font-semibold ${
-                          campaign.aiScore >= 70
-                            ? 'bg-success/10 text-success'
-                            : campaign.aiScore >= 40
-                            ? 'bg-warning/10 text-warning'
-                            : 'bg-danger/10 text-danger'
-                        }`}
+            {/* AI Playbooks */}
+            <AIPlaybooks campaigns={campaigns} onAction={handlePlaybookAction} />
+
+            {/* Campaign Table */}
+            <div className="card overflow-hidden">
+              <div className="px-4 py-3 border-b border-divider flex items-center justify-between">
+                <h3 className="font-semibold text-text">Campaigns</h3>
+                <div className="flex items-center gap-2 text-xs text-text3">
+                  <span>Click AI Score to see breakdown</span>
+                </div>
+              </div>
+              {loading ? (
+                <div className="p-8 text-center text-text2">Loading campaigns...</div>
+              ) : (
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-divider bg-surface2">
+                      <th className="text-left p-4 text-xs font-semibold text-text2 uppercase">Campaign</th>
+                      <th className="text-right p-4 text-xs font-semibold text-text2 uppercase">Spend</th>
+                      <th className="text-right p-4 text-xs font-semibold text-text2 uppercase">Conv</th>
+                      <th className="text-right p-4 text-xs font-semibold text-text2 uppercase">CTR</th>
+                      <th className="text-right p-4 text-xs font-semibold text-text2 uppercase">CPA</th>
+                      <th className="text-right p-4 text-xs font-semibold text-text2 uppercase">
+                        <span className="flex items-center justify-end gap-1">
+                          AI Score
+                          <InfoTooltip content="AI Score is calculated from CTR (35%), Conversion Rate (30%), CPC (20%), and Quality Score (15%). Click to see breakdown and what-if scenarios." />
+                        </span>
+                      </th>
+                      <th className="text-center p-4 text-xs font-semibold text-text2 uppercase">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {campaigns.map(campaign => (
+                      <tr
+                        key={campaign.id}
+                        className="border-b border-divider hover:bg-surface2 transition-colors"
                       >
-                        {campaign.aiScore}
-                      </span>
-                    </td>
-                    <td className="p-4 text-center">
-                      <button
-                        onClick={() => toggleCampaignStatus(campaign)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                          campaign.status === 'ENABLED'
-                            ? 'bg-surface2 text-text2 hover:bg-divider'
-                            : 'bg-accent text-white hover:bg-accent-hover'
-                        }`}
-                      >
-                        {campaign.status === 'ENABLED' ? 'Pause' : 'Enable'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+                        <td className="p-4">
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                campaign.status === 'ENABLED' ? 'bg-success' : 'bg-text3'
+                              }`}
+                            />
+                            <div>
+                              <div className="font-medium text-text">{campaign.name}</div>
+                              <div className="text-xs text-text3">{campaign.type}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-4 text-right tabular-nums text-text">
+                          ${campaign.spend.toLocaleString()}
+                        </td>
+                        <td className="p-4 text-right tabular-nums text-text">
+                          {campaign.conversions}
+                        </td>
+                        <td className="p-4 text-right tabular-nums text-text">
+                          {campaign.ctr.toFixed(2)}%
+                        </td>
+                        <td className="p-4 text-right tabular-nums text-text">
+                          ${campaign.cpa.toFixed(2)}
+                        </td>
+                        <td className="p-4 text-right">
+                          <button
+                            onClick={() => handleScoreClick(campaign)}
+                            className={`inline-flex items-center justify-center w-10 h-6 rounded-full text-xs font-semibold cursor-pointer transition-all hover:scale-110 hover:shadow-lg ${
+                              campaign.aiScore >= 70
+                                ? 'bg-success/10 text-success hover:bg-success/20'
+                                : campaign.aiScore >= 40
+                                ? 'bg-warning/10 text-warning hover:bg-warning/20'
+                                : 'bg-danger/10 text-danger hover:bg-danger/20'
+                            }`}
+                            title="Click to see What-If scenarios"
+                          >
+                            {campaign.aiScore}
+                          </button>
+                        </td>
+                        <td className="p-4 text-center">
+                          <button
+                            onClick={() => toggleCampaignStatus(campaign)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                              campaign.status === 'ENABLED'
+                                ? 'bg-surface2 text-text2 hover:bg-divider'
+                                : 'bg-accent text-white hover:bg-accent-hover'
+                            }`}
+                          >
+                            {campaign.status === 'ENABLED' ? 'Pause' : 'Enable'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </>
+        ) : (
+          /* Build Mode Content */
+          <div className="card p-8 text-center">
+            <div className="text-4xl mb-4">🚧</div>
+            <h2 className="text-xl font-semibold text-text mb-2">Build Mode Coming Soon</h2>
+            <p className="text-text2 max-w-md mx-auto">
+              Create campaigns, manage keywords, and configure negative keywords.
+              Paste a URL to scan landing pages and generate AI-powered campaign structures.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Right: AI Chat */}
-      <div className="w-[400px] border-l border-divider bg-surface flex flex-col">
-        <div className="p-4 border-b border-divider">
+      <div className={`w-[400px] border-l border-divider bg-surface flex flex-col ${
+        mode === 'monitor' ? 'border-l-blue-900/30' : 'border-l-purple-900/30'
+      }`}>
+        <div className={`p-4 border-b border-divider ${
+          mode === 'monitor' ? 'bg-blue-900/10' : 'bg-purple-900/10'
+        }`}>
           <div className="flex items-center gap-2">
-            <span className="text-accent text-xl">✨</span>
+            <span className={`text-xl ${mode === 'monitor' ? 'text-blue-500' : 'text-purple-500'}`}>✨</span>
             <h2 className="font-semibold text-text">AI Assistant</h2>
           </div>
-          <p className="text-xs text-text3 mt-1">Ask me to optimize, analyze, or manage campaigns</p>
+          <p className="text-xs text-text3 mt-1">
+            {mode === 'monitor'
+              ? 'Ask me to optimize, analyze, or manage campaigns'
+              : 'I can help you create and configure campaigns'
+            }
+          </p>
         </div>
 
         {/* Chat Messages */}
@@ -283,17 +370,18 @@ export default function Home() {
             <div className="text-center text-text3 py-8">
               <p className="mb-4">Try asking:</p>
               <div className="space-y-2">
-                {['Optimize my campaigns', 'What should I pause?', 'Show top performers'].map(
-                  suggestion => (
-                    <button
-                      key={suggestion}
-                      onClick={() => setInput(suggestion)}
-                      className="block w-full px-4 py-2 bg-surface2 rounded-lg text-sm text-text2 hover:bg-divider transition-colors"
-                    >
-                      {suggestion}
-                    </button>
-                  )
-                )}
+                {(mode === 'monitor'
+                  ? ['Optimize my campaigns', 'What should I pause?', 'Show top performers']
+                  : ['Create a new campaign', 'Suggest keywords', 'Scan my landing page']
+                ).map(suggestion => (
+                  <button
+                    key={suggestion}
+                    onClick={() => setInput(suggestion)}
+                    className="block w-full px-4 py-2 bg-surface2 rounded-lg text-sm text-text2 hover:bg-divider transition-colors"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
               </div>
             </div>
           )}
@@ -307,7 +395,7 @@ export default function Home() {
               <div
                 className={`inline-block max-w-[85%] px-4 py-2 rounded-2xl text-sm whitespace-pre-wrap ${
                   message.role === 'user'
-                    ? 'bg-accent text-white'
+                    ? mode === 'monitor' ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
                     : 'bg-surface2 text-text'
                 }`}
               >
@@ -333,22 +421,65 @@ export default function Home() {
             <button
               onClick={handleSend}
               disabled={streaming || !input.trim()}
-              className="btn-primary px-4"
+              className={`px-4 py-2 rounded-xl text-white font-medium transition-colors disabled:opacity-50 ${
+                mode === 'monitor' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-purple-600 hover:bg-purple-700'
+              }`}
             >
               {streaming ? '...' : 'Send'}
             </button>
           </div>
         </div>
       </div>
+
+      {/* What-If Drawer */}
+      {selectedCampaign && (
+        <WhatIfDrawer
+          campaign={selectedCampaign}
+          isOpen={showWhatIf}
+          onClose={() => {
+            setShowWhatIf(false);
+            setSelectedCampaign(null);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function StatCard({
+  label,
+  value,
+  sublabel,
+  icon,
+  highlight,
+  tooltip
+}: {
+  label: string;
+  value: string;
+  sublabel?: string;
+  icon?: string;
+  highlight?: 'success' | 'warning' | 'danger';
+  tooltip?: string;
+}) {
+  const highlightClasses = {
+    success: 'text-success',
+    warning: 'text-warning',
+    danger: 'text-danger',
+  };
+
   return (
     <div className="card p-4">
-      <div className="text-xs text-text3 mb-1">{label}</div>
-      <div className="text-xl font-semibold text-text tabular-nums">{value}</div>
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-xs text-text3 flex items-center gap-1">
+          {label}
+          {tooltip && <InfoTooltip content={tooltip} />}
+        </div>
+        {icon && <span className="text-lg">{icon}</span>}
+      </div>
+      <div className={`text-xl font-semibold tabular-nums ${highlight ? highlightClasses[highlight] : 'text-text'}`}>
+        {value}
+        {sublabel && <span className="text-sm text-text3 font-normal ml-1">{sublabel}</span>}
+      </div>
     </div>
   );
 }
