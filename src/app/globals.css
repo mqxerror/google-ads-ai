@@ -1,23 +1,40 @@
 @import 'tailwindcss';
 
 :root {
-  --bg: #F5F5F7;
+  /* Finor-inspired design system */
+  --bg: #F0F0F5;
   --surface: #FFFFFF;
-  --surface2: #F2F2F7;
-  --divider: #E5E5EA;
-  --text: #1D1D1F;
-  --text2: #6E6E73;
-  --text3: #8E8E93;
-  --accent: #0A84FF;
-  --accent-hover: #0077ED;
-  --success: #34C759;
-  --warning: #FF9F0A;
-  --danger: #FF453A;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.10);
+  --surface2: #F7F7FA;
+  --divider: #E8E8ED;
+  --text: #1A1A2E;
+  --text2: #64648C;
+  --text3: #9494B8;
+
+  /* Primary accent - vibrant indigo like Finor */
+  --accent: #4F46E5;
+  --accent-light: #EEF2FF;
+  --accent-hover: #4338CA;
+
+  /* Semantic colors */
+  --success: #10B981;
+  --success-light: #D1FAE5;
+  --warning: #F59E0B;
+  --warning-light: #FEF3C7;
+  --danger: #EF4444;
+  --danger-light: #FEE2E2;
+
+  /* Shadows - softer, more spread */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  --shadow-lg: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.03), 0 2px 4px rgba(0, 0, 0, 0.04);
+
+  /* Larger, more modern radii */
   --radius-sm: 10px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
 }
 
 @theme inline {
@@ -29,17 +46,22 @@
   --color-text2: var(--text2);
   --color-text3: var(--text3);
   --color-accent: var(--accent);
+  --color-accent-light: var(--accent-light);
   --color-success: var(--success);
+  --color-success-light: var(--success-light);
   --color-warning: var(--warning);
+  --color-warning-light: var(--warning-light);
   --color-danger: var(--danger);
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, sans-serif;
+  --color-danger-light: var(--danger-light);
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, sans-serif;
+  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
 }
 
 ::-webkit-scrollbar {
@@ -115,7 +137,90 @@ body {
 .card {
   background: var(--surface);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--divider);
+}
+
+/* Finor-style accent card (like the Income card) */
+.card-accent {
+  background: linear-gradient(135deg, var(--accent) 0%, #6366F1 100%);
+  color: white;
+  border: none;
+}
+
+/* Stats number - large display */
+.stat-number {
+  font-size: 2.5rem;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+/* Change badge */
+.change-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.change-badge-positive {
+  background: var(--success-light);
+  color: var(--success);
+}
+
+.change-badge-negative {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+
+/* Navigation pill style like Finor */
+.nav-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  border-radius: var(--radius-full);
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--text2);
+}
+
+.nav-pill:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.nav-pill-active {
+  background: var(--text);
+  color: white;
+}
+
+.nav-pill-active:hover {
+  background: var(--text);
+  color: white;
+}
+
+/* Progress bar like Finor savings */
+.progress-bar {
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface2);
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg, var(--accent) 0%, #818CF8 100%);
+  transition: width 0.5s ease;
 }
 
 @keyframes fadeIn {
