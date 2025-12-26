@@ -89,6 +89,7 @@ export async function listMCCClientAccounts(refreshToken: string, mccId?: string
     // Query the MCC to get all client accounts
     const customer = getCustomer(client, loginCustomerId, refreshToken, loginCustomerId);
 
+    // Get ALL client accounts under MCC (not just level 1, include inactive for visibility)
     const result = await customer.query(`
       SELECT
         customer_client.id,
@@ -100,21 +101,39 @@ export async function listMCCClientAccounts(refreshToken: string, mccId?: string
         customer_client.level
       FROM customer_client
       WHERE customer_client.manager = FALSE
-        AND customer_client.status = 'ENABLED'
-        AND customer_client.level = 1
     `);
+
+    console.log(`[Google Ads] Raw MCC query returned ${result.length} accounts`);
 
     console.log(`[Google Ads] Found ${result.length} client accounts under MCC ${loginCustomerId}`);
 
-    return result.map((row) => ({
-      customerId: row.customer_client?.id?.toString() || '',
-      descriptiveName: row.customer_client?.descriptive_name || 'Unknown Account',
-      currencyCode: row.customer_client?.currency_code || 'USD',
-      timeZone: row.customer_client?.time_zone || 'America/New_York',
-      manager: false,
-      status: row.customer_client?.status || 'UNKNOWN',
-      level: row.customer_client?.level || 0,
-    })).filter(acc => acc.customerId);
+    const accounts = result.map((row) => {
+      const id = row.customer_client?.id?.toString() || '';
+      const name = row.customer_client?.descriptive_name;
+      const status = row.customer_client?.status || 'UNKNOWN';
+      const isActive = status === 'ENABLED';
+      return {
+        customerId: id,
+        // Use name if available, otherwise show formatted account ID
+        // Mark inactive accounts
+        descriptiveName: name
+          ? (isActive ? name : `${name} (Inactive)`)
+          : `Account ${id.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3')}${isActive ? '' : ' (Inactive)'}`,
+        currencyCode: row.customer_client?.currency_code || 'USD',
+        timeZone: row.customer_client?.time_zone || 'America/New_York',
+        manager: false,
+        status,
+        level: row.customer_client?.level || 0,
+        isActive,
+      };
+    }).filter(acc => acc.customerId);
+
+    // Sort: active accounts first, then by name
+    return accounts.sort((a, b) => {
+      if (a.isActive && !b.isActive) return -1;
+      if (!a.isActive && b.isActive) return 1;
+      return a.descriptiveName.localeCompare(b.descriptiveName);
+    });
   } catch (error) {
     console.error('[Google Ads] Error listing MCC client accounts:', error);
     return [];

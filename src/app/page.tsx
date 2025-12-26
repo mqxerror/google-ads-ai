@@ -361,11 +361,11 @@ export default function Home() {
                 <select
                   value={customerId}
                   onChange={(e) => handleAccountSwitch(e.target.value)}
-                  className="appearance-none bg-surface2 text-text text-xs rounded-lg px-3 py-1.5 pr-8 border border-divider focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer"
+                  className="appearance-none bg-surface2 text-text text-xs rounded-lg px-3 py-1.5 pr-8 border border-divider focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer min-w-[160px]"
                 >
                   {accounts.map((acc) => (
                     <option key={acc.customerId} value={acc.customerId}>
-                      {acc.descriptiveName || `Account ${acc.customerId}`}
+                      {acc.descriptiveName} ({acc.customerId})
                     </option>
                   ))}
                 </select>
