@@ -18,10 +18,13 @@ const WEIGHTS = {
 };
 
 export default function WhatIfDrawer({ campaign, isOpen, onClose }: WhatIfDrawerProps) {
+  // Calculate CPC from spend/clicks
+  const calculatedCpc = campaign.spend / Math.max(campaign.clicks || 1, 1);
+
   // Current values
   const [ctr, setCtr] = useState(campaign.ctr);
   const [convRate, setConvRate] = useState((campaign.conversions / Math.max(campaign.clicks || 1, 1)) * 100);
-  const [cpc, setCpc] = useState(campaign.cpc || campaign.spend / Math.max(campaign.clicks || 1, 1));
+  const [cpc, setCpc] = useState(calculatedCpc);
   const [qualityScore, setQualityScore] = useState(7); // Default QS
 
   // Calculate projected AI Score
@@ -50,7 +53,7 @@ export default function WhatIfDrawer({ campaign, isOpen, onClose }: WhatIfDrawer
   useEffect(() => {
     setCtr(campaign.ctr);
     setConvRate((campaign.conversions / Math.max(campaign.clicks || 1, 1)) * 100);
-    setCpc(campaign.cpc || campaign.spend / Math.max(campaign.clicks || 1, 1));
+    setCpc(campaign.spend / Math.max(campaign.clicks || 1, 1));
     setQualityScore(7);
   }, [campaign]);
 

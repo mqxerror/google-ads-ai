@@ -292,10 +292,11 @@ export async function syncCampaignData(options: SyncOptions): Promise<SyncResult
           campaign.cpa,
           campaign.roas,
           campaign.aiScore,
-          campaign.aiScoreBreakdown?.ctrScore || 0,
-          campaign.aiScoreBreakdown?.conversionScore || 0,
-          campaign.aiScoreBreakdown?.cpcScore || 0,
-          campaign.aiScoreBreakdown?.qualityScore || 70, // Default 7/10
+          // Extract scores from factors array if available
+          campaign.aiScoreBreakdown?.factors?.find(f => f.name === 'CTR Performance')?.score || 0,
+          campaign.aiScoreBreakdown?.factors?.find(f => f.name === 'Conversion Efficiency')?.score || 0,
+          campaign.aiScoreBreakdown?.factors?.find(f => f.name === 'Wasted Spend')?.score || 0,
+          campaign.aiScoreBreakdown?.factors?.find(f => f.name === 'Return on Ad Spend')?.score || 70,
           dataConfidence,
         ]
       );

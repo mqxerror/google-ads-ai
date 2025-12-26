@@ -13,6 +13,12 @@ interface Message {
   content: string;
 }
 
+interface DataFreshness {
+  lastSyncedAt: string;
+  timeAgo: string;
+  isStale: boolean;
+}
+
 export default function Home() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,6 +28,11 @@ export default function Home() {
   const [mode, setMode] = useState<'monitor' | 'build'>('monitor');
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [showWhatIf, setShowWhatIf] = useState(false);
+  const [isDemo, setIsDemo] = useState(true);
+  const [dataFreshness, setDataFreshness] = useState<DataFreshness | null>(null);
+  const [canSync, setCanSync] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const theme = modeThemes[mode];
@@ -41,10 +52,46 @@ export default function Home() {
       const res = await fetch('/api/google-ads/campaigns?customerId=demo');
       const data = await res.json();
       setCampaigns(data.campaigns || []);
+      setIsDemo(data.isDemo ?? true);
+      setDataFreshness(data.dataFreshness || null);
+      setCanSync(data.canSync ?? false);
     } catch (error) {
       console.error('Error fetching campaigns:', error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSync() {
+    if (syncing) return;
+    setSyncing(true);
+    setSyncError(null);
+
+    try {
+      const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: 'demo', // In production, use real customer ID
+          syncType: 'incremental',
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.rateLimited) {
+        setSyncError(`Rate limited. Try again ${data.nextSyncAt ? 'later' : 'in 1 hour'}.`);
+      } else if (!data.success) {
+        setSyncError(data.error || 'Sync failed');
+      } else {
+        // Refresh campaigns after sync
+        await fetchCampaigns();
+      }
+    } catch (error) {
+      console.error('Sync error:', error);
+      setSyncError('Sync failed. Please try again.');
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -197,7 +244,62 @@ export default function Home() {
             <h1 className="text-2xl font-semibold text-text">Quick Ads AI</h1>
             <p className="text-text2">Stop wasting spend. Grow what works.</p>
           </div>
-          <ModeSwitcher mode={mode} onModeChange={setMode} />
+          <div className="flex items-center gap-4">
+            {/* Data Freshness Indicator */}
+            <div className="flex items-center gap-2">
+              {isDemo ? (
+                <span className="px-2 py-1 bg-amber-500/10 text-amber-500 text-xs rounded-full">
+                  Demo Mode
+                </span>
+              ) : dataFreshness ? (
+                <span className={`px-2 py-1 text-xs rounded-full flex items-center gap-1.5 ${
+                  dataFreshness.isStale
+                    ? 'bg-amber-500/10 text-amber-500'
+                    : 'bg-green-500/10 text-green-500'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    dataFreshness.isStale ? 'bg-amber-500' : 'bg-green-500'
+                  }`} />
+                  Data as of {dataFreshness.timeAgo}
+                </span>
+              ) : null}
+
+              {/* Sync Button */}
+              <button
+                onClick={handleSync}
+                disabled={syncing || (!canSync && !isDemo)}
+                className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors flex items-center gap-1.5 ${
+                  syncing
+                    ? 'bg-surface2 text-text3 cursor-wait'
+                    : canSync || isDemo
+                    ? 'bg-accent text-white hover:bg-accent-hover'
+                    : 'bg-surface2 text-text3 cursor-not-allowed'
+                }`}
+                title={!canSync && !isDemo ? 'Rate limited - try again later' : 'Sync data from Google Ads'}
+              >
+                <svg
+                  className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+                {syncing ? 'Syncing...' : 'Sync Data'}
+              </button>
+            </div>
+
+            {syncError && (
+              <span className="text-xs text-red-500">{syncError}</span>
+            )}
+
+            <ModeSwitcher mode={mode} onModeChange={setMode} />
+          </div>
         </div>
 
         {/* Mode-specific content */}
