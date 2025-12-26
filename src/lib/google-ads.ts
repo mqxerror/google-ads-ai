@@ -1,6 +1,9 @@
 import { GoogleAdsApi, Customer } from 'google-ads-api';
 import { calculateAIScoreWithBreakdown } from './ai-score';
 import { CampaignType } from '@/types/campaign';
+import { getGoogleAdsCircuitBreaker } from './keyword-data/circuit-breaker';
+import type { GoogleAdsKeywordMetrics } from './keyword-data/types';
+import type { AccountKeyword, KeywordPerformanceData } from './database/types';
 
 // Create Google Ads API client
 export function createGoogleAdsClient() {
@@ -398,4 +401,289 @@ function mapCampaignType(type: unknown): string {
   if (type === 9 || type === 'PERFORMANCE_MAX') return 'PERFORMANCE_MAX';
   if (type === 12 || type === 'DEMAND_GEN') return 'DEMAND_GEN';
   return 'SEARCH';
+}
+
+// Fetch keyword metrics from Google Ads Keyword Planner
+export async function fetchKeywordPlannerMetrics(
+  refreshToken: string,
+  customerId: string,
+  keywords: string[],
+  loginCustomerId?: string,
+  locale: string = 'en-US',
+  locationId: string = '2840' // US by default
+): Promise<GoogleAdsKeywordMetrics[]> {
+  if (keywords.length === 0) {
+    return [];
+  }
+
+  // Batch keywords (max 20 per Google Ads Keyword Plan Ideas API)
+  const batchSize = 20;
+  const batches: string[][] = [];
+  for (let i = 0; i < keywords.length; i += batchSize) {
+    batches.push(keywords.slice(i, i + batchSize));
+  }
+
+  const breaker = getGoogleAdsCircuitBreaker();
+  const allResults: GoogleAdsKeywordMetrics[] = [];
+
+  for (const batch of batches) {
+    try {
+      const batchResults = await breaker.execute(async () => {
+        const client = createGoogleAdsClient();
+        const customer = getCustomer(client, customerId, refreshToken, loginCustomerId);
+
+        // Use KeywordPlanIdeaService.generateKeywordIdeas method
+        const response = await customer.keywordPlanIdeas.generateKeywordIdeas({
+          customer_id: customerId,
+          language: 'languageConstants/1000', // English
+          geo_target_constants: [`geoTargetConstants/${locationId}`],
+          keyword_seed: {
+            keywords: batch,
+          },
+        });
+
+        // Response is an array directly, not { results: [...] }
+        const results = Array.isArray(response) ? response : (response.results || []);
+
+        console.log(`[Google Ads] API Response type:`, typeof response, Array.isArray(response) ? 'array' : 'object');
+        console.log(`[Google Ads] Results count: ${results.length}`);
+
+        return results.map((result: any) => {
+          const metrics = result.keyword_idea_metrics;
+
+          // Get avg monthly searches from monthly_search_volumes array (most recent month)
+          let avgMonthlySearches = 0;
+          if (metrics?.monthly_search_volumes?.length > 0) {
+            // Average of last 12 months or available months
+            const volumes = metrics.monthly_search_volumes
+              .map((m: any) => parseInt(m.monthly_searches || '0'))
+              .filter((v: number) => v > 0);
+            if (volumes.length > 0) {
+              avgMonthlySearches = Math.round(volumes.reduce((a: number, b: number) => a + b, 0) / volumes.length);
+            }
+          } else {
+            avgMonthlySearches = metrics?.avg_monthly_searches || 0;
+          }
+
+          // Convert to numbers (API returns strings!) - FIXED v2
+          const lowBidStr = metrics?.low_top_of_page_bid_micros || '0';
+          const highBidStr = metrics?.high_top_of_page_bid_micros || '0';
+          const lowBid = Number(lowBidStr);
+          const highBid = Number(highBidStr);
+          const avgCpc = lowBid > 0 && highBid > 0 ? Math.round((lowBid + highBid) / 2) : 0;
+
+          // DEBUG: Log type conversion
+          if (avgCpc > 0) {
+            console.log(`[Google Ads] CPC FIX v2 for "${result.text}":`, {
+              lowBidStr: lowBidStr,
+              highBidStr: highBidStr,
+              lowBidNum: lowBid,
+              highBidNum: highBid,
+              sum: lowBid + highBid,
+              avgCpc,
+              avgCpcDollars: (avgCpc / 1000000).toFixed(2)
+            });
+          }
+
+          console.log(`[Google Ads] ✓ Keyword: ${result.text}, Volume: ${avgMonthlySearches}, CPC: ${avgCpc / 1000000}`);
+
+          return {
+            keyword: result.text || '',
+            monthlySearchVolume: avgMonthlySearches,
+            avgCpcMicros: avgCpc,
+            competition: mapCompetitionLevel(metrics?.competition),
+            competitionIndex: metrics?.competition_index || 0,
+          };
+        });
+      });
+
+      allResults.push(...batchResults);
+    } catch (error) {
+      console.error(`[Google Ads] Error fetching keyword metrics for batch:`, error);
+
+      // Return null metrics for failed keywords (graceful degradation)
+      batch.forEach(keyword => {
+        allResults.push({
+          keyword,
+          monthlySearchVolume: 0,
+          avgCpcMicros: 0,
+          competition: 'LOW',
+          competitionIndex: 0,
+        });
+      });
+    }
+  }
+
+  return allResults;
+}
+
+// Helper to map competition level
+function mapCompetitionLevel(competition: unknown): 'LOW' | 'MEDIUM' | 'HIGH' {
+  if (competition === 'HIGH' || competition === 3) return 'HIGH';
+  if (competition === 'MEDIUM' || competition === 2) return 'MEDIUM';
+  return 'LOW';
+}
+
+// =====================================================
+// Keyword Center - Account Integration Functions
+// =====================================================
+
+/**
+ * Fetch all keywords from user's Google Ads campaigns
+ * Used for syncing account keywords to keyword_account_data table
+ */
+export async function fetchAllCampaignKeywords(
+  refreshToken: string,
+  customerId: string,
+  options?: {
+    campaignIds?: string[];
+    includeRemoved?: boolean;
+    loginCustomerId?: string;
+  }
+): Promise<AccountKeyword[]> {
+  const client = createGoogleAdsClient();
+  const customer = getCustomer(
+    client,
+    customerId,
+    refreshToken,
+    options?.loginCustomerId
+  );
+
+  const campaignFilter = options?.campaignIds?.length
+    ? `AND campaign.id IN (${options.campaignIds.join(', ')})`
+    : '';
+
+  const statusFilter = options?.includeRemoved
+    ? ''
+    : `AND ad_group_criterion.status != 'REMOVED'`;
+
+  const query = `
+    SELECT
+      ad_group_criterion.keyword.text,
+      ad_group_criterion.keyword.match_type,
+      campaign.id,
+      campaign.name,
+      ad_group.id,
+      ad_group.name,
+      ad_group_criterion.status
+    FROM keyword_view
+    WHERE ad_group_criterion.type = KEYWORD
+      ${campaignFilter}
+      ${statusFilter}
+  `;
+
+  console.log('[Google Ads] Fetching campaign keywords...');
+
+  try {
+    const results = await customer.query(query);
+
+    console.log(`[Google Ads] Found ${results.length} keywords`);
+
+    return results.map((row: any) => ({
+      keyword: row.ad_group_criterion?.keyword?.text || '',
+      matchType: row.ad_group_criterion?.keyword?.match_type || 'BROAD',
+      campaignId: row.campaign?.id?.toString() || '',
+      campaignName: row.campaign?.name || '',
+      adGroupId: row.ad_group?.id?.toString() || '',
+      adGroupName: row.ad_group?.name || '',
+      status: row.ad_group_criterion?.status || 'ENABLED',
+    }));
+  } catch (error) {
+    console.error('[Google Ads] Error fetching campaign keywords:', error);
+    throw error;
+  }
+}
+
+/**
+ * Fetch keyword performance data for specified keywords or all keywords
+ * Used for populating keyword_performance_history table
+ */
+export async function fetchKeywordPerformance(
+  refreshToken: string,
+  customerId: string,
+  options: {
+    keywords?: string[];
+    startDate: string; // YYYY-MM-DD
+    endDate: string;
+    campaignIds?: string[];
+    loginCustomerId?: string;
+  }
+): Promise<KeywordPerformanceData[]> {
+  const client = createGoogleAdsClient();
+  const customer = getCustomer(
+    client,
+    customerId,
+    refreshToken,
+    options.loginCustomerId
+  );
+
+  const keywordFilter = options.keywords?.length
+    ? `AND ad_group_criterion.keyword.text IN ('${options.keywords.join("', '")}')`
+    : '';
+
+  const campaignFilter = options.campaignIds?.length
+    ? `AND campaign.id IN (${options.campaignIds.join(', ')})`
+    : '';
+
+  const query = `
+    SELECT
+      ad_group_criterion.keyword.text,
+      segments.date,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.cost_micros,
+      metrics.conversions,
+      metrics.quality_score
+    FROM keyword_view
+    WHERE segments.date BETWEEN '${options.startDate}' AND '${options.endDate}'
+      ${keywordFilter}
+      ${campaignFilter}
+      AND ad_group_criterion.type = KEYWORD
+    ORDER BY segments.date DESC
+  `;
+
+  console.log('[Google Ads] Fetching keyword performance data...');
+
+  try {
+    const results = await customer.query(query);
+
+    console.log(`[Google Ads] Found ${results.length} performance records`);
+
+    return results.map((row: any) => {
+      const impressions = row.metrics?.impressions || 0;
+      const clicks = row.metrics?.clicks || 0;
+      const ctr = impressions > 0 ? clicks / impressions : 0;
+
+      return {
+        keyword: row.ad_group_criterion?.keyword?.text || '',
+        date: row.segments?.date || '',
+        impressions,
+        clicks,
+        cost: (row.metrics?.cost_micros || 0) / 1_000_000,
+        conversions: row.metrics?.conversions || 0,
+        ctr,
+        qualityScore: row.metrics?.quality_score || null,
+      };
+    });
+  } catch (error) {
+    console.error('[Google Ads] Error fetching keyword performance:', error);
+    throw error;
+  }
+}
+
+/**
+ * Match generated keywords against account keywords
+ * Used by Keyword Center to show which keywords already exist in campaigns
+ */
+export async function matchKeywordsAgainstAccount(
+  userId: string,
+  customerId: string,
+  keywords: string[]
+): Promise<Map<string, AccountKeyword[]>> {
+  // Import database function dynamically to avoid circular dependencies
+  const { getAccountKeywordsBatch } = await import('./database/account-data');
+
+  const matchMap = await getAccountKeywordsBatch(userId, customerId, keywords);
+
+  return matchMap;
 }

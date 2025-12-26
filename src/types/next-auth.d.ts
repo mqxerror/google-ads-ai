@@ -5,5 +5,8 @@ declare module 'next-auth' {
     accessToken?: string;
     refreshToken?: string;
     error?: string;
+    customerId?: string;
+    loginCustomerId?: string;
+    customerName?: string;
   }
 }

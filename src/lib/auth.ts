@@ -113,6 +113,57 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (token.error) {
         session.error = token.error as string;
       }
+
+      // Fetch user's Google Ads account to populate customerId
+      if (session.user?.email) {
+        try {
+          const { Pool } = await import('pg');
+          const pool = new Pool({
+            host: process.env.POSTGRES_HOST || '38.97.60.181',
+            port: parseInt(process.env.POSTGRES_PORT || '5433'),
+            user: process.env.POSTGRES_USER || 'postgres',
+            password: process.env.POSTGRES_PASSWORD || 'postgres123',
+            database: process.env.POSTGRES_DB || 'google_ads_manager',
+          });
+
+          // First get the userId from the User table
+          const userResult = await pool.query(
+            'SELECT id FROM "User" WHERE email = $1 LIMIT 1',
+            [session.user.email]
+          );
+
+          if (userResult.rows.length > 0) {
+            const userId = userResult.rows[0].id;
+
+            // Then get the first Google Ads account (prefer non-manager accounts)
+            const accountResult = await pool.query(
+              `SELECT "googleAccountId", "accountName", "isManager", "parentManagerId"
+               FROM "GoogleAdsAccount"
+               WHERE "userId" = $1 AND status = 'connected'
+               ORDER BY "isManager" ASC, "lastSyncAt" DESC NULLS LAST
+               LIMIT 1`,
+              [userId]
+            );
+
+            if (accountResult.rows.length > 0) {
+              const account = accountResult.rows[0];
+              session.customerId = account.googleAccountId;
+              session.customerName = account.accountName;
+
+              // If this account has a parent manager, set loginCustomerId
+              if (account.parentManagerId) {
+                session.loginCustomerId = account.parentManagerId;
+              }
+            }
+          }
+
+          await pool.end();
+        } catch (error) {
+          console.error('[Auth] Failed to fetch Google Ads account:', error);
+          // Don't fail auth if account lookup fails
+        }
+      }
+
       return session;
     },
   },
