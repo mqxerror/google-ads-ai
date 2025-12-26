@@ -19,7 +19,7 @@ const MIN_SYNC_INTERVAL_AUTO = 24 * 60 * 60 * 1000; // 24 hours for auto
 const MIN_SYNC_INTERVAL_MANUAL = 60 * 60 * 1000; // 1 hour for manual
 
 import { Pool, PoolClient } from 'pg';
-import { fetchCampaigns, fetchAdGroups, listAccessibleAccounts } from './google-ads';
+import { fetchCampaigns, fetchAdGroups, listAccessibleAccounts, listMCCClientAccounts } from './google-ads';
 import { calculateAIScoreWithBreakdown } from './ai-score';
 
 // Database connection
@@ -122,6 +122,7 @@ export async function upsertUser(
 
 /**
  * Sync accessible Google Ads accounts for a user
+ * First tries direct access, then falls back to MCC discovery
  */
 export async function syncUserAccounts(
   userId: string,
@@ -129,7 +130,20 @@ export async function syncUserAccounts(
 ): Promise<{ accountsFound: number; accountsSynced: number }> {
   const client = await pool.connect();
   try {
-    const accounts = await listAccessibleAccounts(refreshToken);
+    // Get directly accessible accounts
+    const accessibleAccounts = await listAccessibleAccounts(refreshToken);
+
+    // Filter to client accounts only (not manager accounts)
+    let accounts = accessibleAccounts.filter(acc => !acc.manager);
+
+    // If no client accounts, try MCC discovery
+    if (accounts.length === 0) {
+      console.log('[Data Sync] No direct client accounts, trying MCC discovery...');
+      const mccAccounts = await listMCCClientAccounts(refreshToken);
+      accounts = mccAccounts;
+    }
+
+    console.log(`[Data Sync] Syncing ${accounts.length} accounts to database`);
 
     let synced = 0;
     for (const account of accounts) {
@@ -143,7 +157,7 @@ export async function syncUserAccounts(
            time_zone = $5,
            is_manager = $6,
            updated_at = NOW()`,
-        [userId, account.customerId, account.descriptiveName, account.currencyCode, account.timeZone, account.manager]
+        [userId, account.customerId, account.descriptiveName, account.currencyCode, account.timeZone, account.manager || false]
       );
       synced++;
     }

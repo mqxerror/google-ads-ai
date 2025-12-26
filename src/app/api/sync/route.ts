@@ -21,9 +21,9 @@ export async function POST(request: NextRequest) {
   try {
     const session = await auth();
 
-    if (!session?.accessToken || !session.user?.email) {
+    if (!session?.refreshToken || !session.user?.email) {
       return NextResponse.json(
-        { error: 'Authentication required' },
+        { error: 'Authentication required or missing refresh token' },
         { status: 401 }
       );
     }
@@ -60,11 +60,11 @@ export async function POST(request: NextRequest) {
     const userId = await upsertUser(
       session.user.email,
       session.user.name || undefined,
-      session.accessToken
+      session.refreshToken
     );
 
-    // Sync user's Google Ads accounts first
-    await syncUserAccounts(userId, session.accessToken);
+    // Sync user's Google Ads accounts first (requires refresh token)
+    await syncUserAccounts(userId, session.refreshToken);
 
     // Get account ID from database
     const { Pool } = await import('pg');
@@ -82,11 +82,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Trigger sync
+    // Trigger sync (Google Ads API requires refresh token)
     const result = await syncCampaignData({
       accountId: accountResult.rows[0].id,
       customerId,
-      refreshToken: session.accessToken,
+      refreshToken: session.refreshToken,
       loginCustomerId: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID,
       syncType,
     });
@@ -132,7 +132,7 @@ export async function GET(request: NextRequest) {
     const customerId = searchParams.get('customerId');
     const includeData = searchParams.get('includeData') === 'true';
 
-    if (!session?.accessToken) {
+    if (!session?.refreshToken) {
       return NextResponse.json(
         { error: 'Authentication required' },
         { status: 401 }

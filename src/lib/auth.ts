@@ -76,7 +76,7 @@ const providers = isDemoMode
           params: {
             scope: 'openid email profile https://www.googleapis.com/auth/adwords',
             access_type: 'offline',
-            prompt: 'consent',
+            prompt: 'select_account consent', // Force account picker every time
           },
         },
       }),
@@ -108,6 +108,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
     async session({ session, token }) {
       session.accessToken = token.accessToken as string;
+      // Google Ads API requires refresh token, not access token
+      session.refreshToken = token.refreshToken as string;
       if (token.error) {
         session.error = token.error as string;
       }

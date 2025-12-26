@@ -20,6 +20,12 @@ interface DataFreshness {
   isStale: boolean;
 }
 
+interface GoogleAdsAccount {
+  customerId: string;
+  descriptiveName: string;
+  currencyCode?: string;
+}
+
 export default function Home() {
   const { data: session, status } = useSession();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -36,29 +42,73 @@ export default function Home() {
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string>('demo');
+  const [accounts, setAccounts] = useState<GoogleAdsAccount[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const theme = modeThemes[mode];
   const isAuthenticated = status === 'authenticated' && session?.user;
 
-  // Fetch campaigns on load
+  // Fetch accounts and campaigns on load
   useEffect(() => {
-    fetchCampaigns();
-  }, []);
+    if (isAuthenticated) {
+      fetchAccounts();
+    } else {
+      // Not authenticated - use demo mode
+      fetchCampaigns('demo');
+    }
+  }, [isAuthenticated]);
 
   // Scroll chat to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  async function fetchCampaigns() {
+  async function fetchAccounts() {
     try {
-      const res = await fetch('/api/google-ads/campaigns?customerId=demo');
+      const res = await fetch('/api/google-ads/accounts');
+      const data = await res.json();
+
+      if (data.accounts && data.accounts.length > 0) {
+        // Store all accounts for the switcher
+        setAccounts(data.accounts);
+
+        // Use first account by default
+        const firstAccount = data.accounts[0];
+        console.log(`[App] Using account: ${firstAccount.descriptiveName} (${firstAccount.customerId}) from ${data.source}`);
+        setCustomerId(firstAccount.customerId);
+        fetchCampaigns(firstAccount.customerId);
+      } else {
+        // No accounts found - show helpful message and stay in demo mode
+        console.log('[App] No client accounts found:', data.message || data.error);
+        setAccounts([]);
+        fetchCampaigns('demo');
+      }
+    } catch (error) {
+      console.error('Error fetching accounts:', error);
+      setAccounts([]);
+      fetchCampaigns('demo');
+    }
+  }
+
+  // Handle account switch
+  function handleAccountSwitch(newCustomerId: string) {
+    if (newCustomerId === customerId) return;
+    setCustomerId(newCustomerId);
+    setLoading(true);
+    fetchCampaigns(newCustomerId);
+  }
+
+  async function fetchCampaigns(custId: string) {
+    try {
+      const res = await fetch(`/api/google-ads/campaigns?customerId=${custId}`);
       const data = await res.json();
       setCampaigns(data.campaigns || []);
       setIsDemo(data.isDemo ?? true);
       setDataFreshness(data.dataFreshness || null);
       setCanSync(data.canSync ?? false);
+      if (!data.isDemo) {
+        setCustomerId(custId);
+      }
     } catch (error) {
       console.error('Error fetching campaigns:', error);
     } finally {
@@ -67,7 +117,10 @@ export default function Home() {
   }
 
   async function handleSync() {
-    if (syncing) return;
+    if (syncing || !customerId || customerId === 'demo') {
+      setSyncError('Please sign in with Google to sync your campaigns.');
+      return;
+    }
     setSyncing(true);
     setSyncError(null);
 
@@ -76,7 +129,7 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customerId: 'demo', // In production, use real customer ID
+          customerId,
           syncType: 'incremental',
         }),
       });
@@ -89,7 +142,7 @@ export default function Home() {
         setSyncError(data.error || 'Sync failed');
       } else {
         // Refresh campaigns after sync
-        await fetchCampaigns();
+        await fetchCampaigns(customerId);
       }
     } catch (error) {
       console.error('Sync error:', error);
@@ -300,6 +353,31 @@ export default function Home() {
 
             {syncError && (
               <span className="text-xs text-red-500">{syncError}</span>
+            )}
+
+            {/* Account Switcher */}
+            {accounts.length > 0 && (
+              <div className="relative">
+                <select
+                  value={customerId}
+                  onChange={(e) => handleAccountSwitch(e.target.value)}
+                  className="appearance-none bg-surface2 text-text text-xs rounded-lg px-3 py-1.5 pr-8 border border-divider focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer"
+                >
+                  {accounts.map((acc) => (
+                    <option key={acc.customerId} value={acc.customerId}>
+                      {acc.descriptiveName || `Account ${acc.customerId}`}
+                    </option>
+                  ))}
+                </select>
+                <svg
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-text3 pointer-events-none"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
             )}
 
             <ModeSwitcher mode={mode} onModeChange={setMode} />

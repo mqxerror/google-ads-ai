@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
       campaign: CreateCampaignInput;
     };
 
-    if (!session?.accessToken || !customerId || customerId === 'demo') {
+    if (!session?.refreshToken || !customerId || customerId === 'demo') {
       // Demo mode - simulate success
       return NextResponse.json({
         success: true,
@@ -121,7 +121,7 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await createCampaign(
-      session.accessToken,
+      session.refreshToken,
       customerId,
       campaign,
       process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
@@ -147,12 +147,12 @@ export async function PATCH(request: NextRequest) {
       status: 'ENABLED' | 'PAUSED';
     };
 
-    if (!session?.accessToken || !customerId || customerId === 'demo') {
+    if (!session?.refreshToken || !customerId || customerId === 'demo') {
       return NextResponse.json({ success: true });
     }
 
     const result = await updateCampaignStatus(
-      session.accessToken,
+      session.refreshToken,
       customerId,
       campaignId,
       status,

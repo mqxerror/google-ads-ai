@@ -28,6 +28,7 @@ export function getCustomer(
 // List accessible accounts
 export async function listAccessibleAccounts(refreshToken: string) {
   const client = createGoogleAdsClient();
+  const loginCustomerId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
 
   try {
     const customers = await client.listAccessibleCustomers(refreshToken);
@@ -36,7 +37,8 @@ export async function listAccessibleAccounts(refreshToken: string) {
       customers.resource_names.map(async (resourceName) => {
         const customerId = resourceName.replace('customers/', '');
         try {
-          const customer = getCustomer(client, customerId, refreshToken);
+          // Use loginCustomerId (MCC) when querying client accounts
+          const customer = getCustomer(client, customerId, refreshToken, loginCustomerId);
           const result = await customer.query(`
             SELECT
               customer.id,
@@ -59,7 +61,8 @@ export async function listAccessibleAccounts(refreshToken: string) {
             };
           }
           return null;
-        } catch {
+        } catch (err) {
+          console.log(`[Google Ads] Could not fetch details for ${customerId}:`, err);
           return null;
         }
       })
@@ -69,6 +72,52 @@ export async function listAccessibleAccounts(refreshToken: string) {
   } catch (error) {
     console.error('Error listing accounts:', error);
     throw error;
+  }
+}
+
+// List client accounts under an MCC (Manager account)
+export async function listMCCClientAccounts(refreshToken: string, mccId?: string) {
+  const client = createGoogleAdsClient();
+  const loginCustomerId = mccId || process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+
+  if (!loginCustomerId) {
+    console.log('[Google Ads] No MCC ID configured');
+    return [];
+  }
+
+  try {
+    // Query the MCC to get all client accounts
+    const customer = getCustomer(client, loginCustomerId, refreshToken, loginCustomerId);
+
+    const result = await customer.query(`
+      SELECT
+        customer_client.id,
+        customer_client.descriptive_name,
+        customer_client.currency_code,
+        customer_client.time_zone,
+        customer_client.manager,
+        customer_client.status,
+        customer_client.level
+      FROM customer_client
+      WHERE customer_client.manager = FALSE
+        AND customer_client.status = 'ENABLED'
+        AND customer_client.level = 1
+    `);
+
+    console.log(`[Google Ads] Found ${result.length} client accounts under MCC ${loginCustomerId}`);
+
+    return result.map((row) => ({
+      customerId: row.customer_client?.id?.toString() || '',
+      descriptiveName: row.customer_client?.descriptive_name || 'Unknown Account',
+      currencyCode: row.customer_client?.currency_code || 'USD',
+      timeZone: row.customer_client?.time_zone || 'America/New_York',
+      manager: false,
+      status: row.customer_client?.status || 'UNKNOWN',
+      level: row.customer_client?.level || 0,
+    })).filter(acc => acc.customerId);
+  } catch (error) {
+    console.error('[Google Ads] Error listing MCC client accounts:', error);
+    return [];
   }
 }
 
