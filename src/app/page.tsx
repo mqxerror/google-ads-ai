@@ -412,16 +412,20 @@ export default function Home() {
               {/* Bar Chart */}
               <div className="flex items-end gap-4 h-48">
                 {monthlyData.map((data, i) => (
-                  <div key={data.month} className="flex-1 flex flex-col items-center gap-2">
+                  <div key={data.month} className="flex-1 flex flex-col items-center gap-2 group">
                     <span className={`text-xs font-medium ${data.change >= 0 ? 'text-success' : 'text-danger'}`}>
                       {data.change >= 0 ? '+' : ''}{data.change}%
                     </span>
-                    <div className="w-full relative" style={{ height: `${(data.spend / maxSpend) * 160}px` }}>
+                    <div className="w-full relative chart-bar animate-bar-grow" style={{ height: `${(data.spend / maxSpend) * 160}px`, animationDelay: `${i * 0.1}s` }}>
+                      {/* Tooltip */}
+                      <div className="tooltip -top-12 left-1/2 -translate-x-1/2">
+                        ${data.spend.toLocaleString()} ({data.change >= 0 ? '+' : ''}{data.change}%)
+                      </div>
                       <div
-                        className={`absolute bottom-0 w-full rounded-t-lg transition-all ${
+                        className={`absolute bottom-0 w-full rounded-t-lg ${
                           i === monthlyData.length - 1
                             ? 'bg-gradient-to-t from-accent to-indigo-400'
-                            : 'bg-surface2 hover:bg-divider'
+                            : 'bg-surface2 group-hover:bg-divider'
                         }`}
                         style={{ height: '100%' }}
                       />
@@ -460,10 +464,10 @@ export default function Home() {
               ) : (
                 <div className="divide-y divide-divider">
                   {campaigns.map(campaign => (
-                    <div key={campaign.id} className="px-6 py-4 flex items-center hover:bg-surface2/50 transition-colors">
+                    <div key={campaign.id} className="campaign-row px-6 py-4 flex items-center">
                       {/* Campaign Info */}
                       <div className="flex items-center gap-4 flex-1">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                        <div className={`campaign-icon w-10 h-10 rounded-xl flex items-center justify-center transition-transform ${
                           campaign.aiScore >= 70 ? 'bg-success-light' : campaign.aiScore >= 40 ? 'bg-warning-light' : 'bg-danger-light'
                         }`}>
                           <svg className={`w-5 h-5 ${campaign.aiScore >= 70 ? 'text-success' : campaign.aiScore >= 40 ? 'text-warning' : 'text-danger'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -539,8 +543,8 @@ export default function Home() {
               {/* Quick Actions */}
               <div className="space-y-3 mb-6">
                 {wasters.length > 0 && (
-                  <div className="p-4 bg-danger-light rounded-xl">
-                    <div className="flex items-center gap-3">
+                  <div className="insight-card p-4 bg-danger-light rounded-xl">
+                    <div className="flex items-center gap-3 mb-3">
                       <div className="w-10 h-10 rounded-lg bg-danger/20 flex items-center justify-center">
                         <svg className="w-5 h-5 text-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
@@ -551,12 +555,18 @@ export default function Home() {
                         <p className="text-xs text-text2">Save ~${Math.round(potentialSavings)}/mo</p>
                       </div>
                     </div>
+                    <button
+                      onClick={() => wasters.forEach(c => toggleCampaignStatus(c))}
+                      className="w-full py-2 bg-danger text-white text-sm font-medium rounded-lg hover:bg-red-600 transition-colors action-btn-pulse"
+                    >
+                      Pause All Wasters
+                    </button>
                   </div>
                 )}
 
                 {winners.length > 0 && (
-                  <div className="p-4 bg-success-light rounded-xl">
-                    <div className="flex items-center gap-3">
+                  <div className="insight-card p-4 bg-success-light rounded-xl">
+                    <div className="flex items-center gap-3 mb-3">
                       <div className="w-10 h-10 rounded-lg bg-success/20 flex items-center justify-center">
                         <svg className="w-5 h-5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
@@ -567,6 +577,9 @@ export default function Home() {
                         <p className="text-xs text-text2">Increase budget for more conversions</p>
                       </div>
                     </div>
+                    <button className="w-full py-2 bg-success text-white text-sm font-medium rounded-lg hover:bg-emerald-600 transition-colors">
+                      View Winners
+                    </button>
                   </div>
                 )}
               </div>
@@ -580,8 +593,8 @@ export default function Home() {
                     <span className="text-text2">AI Score Target</span>
                     <span className="font-medium text-text">{avgScore}/80</span>
                   </div>
-                  <div className="progress-bar">
-                    <div className="progress-bar-fill" style={{ width: `${(avgScore / 80) * 100}%` }} />
+                  <div className="progress-bar progress-bar-animated">
+                    <div className="progress-bar-fill" style={{ width: `${(avgScore / 80) * 100}%`, animationDelay: '0.2s' }} />
                   </div>
                 </div>
 
@@ -590,8 +603,8 @@ export default function Home() {
                     <span className="text-text2">Budget Efficiency</span>
                     <span className="font-medium text-text">${(totalSpend - potentialSavings).toFixed(0)}/${totalSpend.toFixed(0)}</span>
                   </div>
-                  <div className="progress-bar">
-                    <div className="progress-bar-fill bg-gradient-to-r from-success to-emerald-400" style={{ width: `${((totalSpend - potentialSavings) / totalSpend) * 100}%` }} />
+                  <div className="progress-bar progress-bar-animated">
+                    <div className="progress-bar-fill bg-gradient-to-r from-success to-emerald-400" style={{ width: `${((totalSpend - potentialSavings) / totalSpend) * 100}%`, animationDelay: '0.4s' }} />
                   </div>
                 </div>
 
@@ -600,12 +613,13 @@ export default function Home() {
                     <span className="text-text2">Campaign Health</span>
                     <span className="font-medium text-text">{activeCampaigns - wasters.length}/{activeCampaigns} healthy</span>
                   </div>
-                  <div className="progress-bar">
+                  <div className="progress-bar progress-bar-animated">
                     <div
                       className="progress-bar-fill"
                       style={{
                         width: `${((activeCampaigns - wasters.length) / Math.max(activeCampaigns, 1)) * 100}%`,
-                        background: wasters.length > 0 ? 'linear-gradient(90deg, #F59E0B 0%, #FBBF24 100%)' : undefined
+                        background: wasters.length > 0 ? 'linear-gradient(90deg, #F59E0B 0%, #FBBF24 100%)' : undefined,
+                        animationDelay: '0.6s'
                       }}
                     />
                   </div>

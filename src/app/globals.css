@@ -233,10 +233,115 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(79, 70, 229, 0); }
+}
+
+@keyframes bar-grow {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
 .animate-fadeIn {
   animation: fadeIn 0.2s ease-out;
 }
 
 .animate-slideUp {
   animation: slideUp 0.3s ease-out;
+}
+
+.animate-bar-grow {
+  animation: bar-grow 0.6s ease-out forwards;
+  transform-origin: bottom;
+}
+
+/* Campaign row hover effect */
+.campaign-row {
+  transition: all 0.2s ease;
+}
+
+.campaign-row:hover {
+  background: var(--surface2);
+  transform: translateX(4px);
+}
+
+.campaign-row:hover .campaign-icon {
+  transform: scale(1.1);
+}
+
+/* Chart bar hover */
+.chart-bar {
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.chart-bar:hover {
+  filter: brightness(1.1);
+  transform: scaleY(1.05);
+  transform-origin: bottom;
+}
+
+/* Tooltip styles */
+.tooltip {
+  position: absolute;
+  background: var(--text);
+  color: white;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  z-index: 100;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s ease;
+  transform: translateY(4px);
+  pointer-events: none;
+}
+
+.tooltip::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--text);
+}
+
+.chart-bar:hover .tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+/* Insight card hover */
+.insight-card {
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.insight-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Progress bar animation on load */
+.progress-bar-animated .progress-bar-fill {
+  animation: progress-fill 1s ease-out forwards;
+}
+
+@keyframes progress-fill {
+  from { width: 0; }
+}
+
+/* Action button pulse */
+.action-btn-pulse {
+  animation: pulse-glow 2s infinite;
 }
