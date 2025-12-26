@@ -5,6 +5,9 @@ export interface Keyword {
   id: string;
   keyword: string;
   embedding: number[] | null;
+  embedding_model: string | null;  // e.g., 'text-embedding-ada-002'
+  embedding_dimensions: number | null;  // e.g., 1536
+  embedding_created_at: string | null;
   campaign_id: string | null;
   ad_group_id: string | null;
   match_type: 'BROAD' | 'PHRASE' | 'EXACT' | null;
@@ -23,6 +26,9 @@ export interface SearchTerm {
   id: string;
   search_term: string;
   embedding: number[] | null;
+  embedding_model: string | null;  // e.g., 'text-embedding-ada-002'
+  embedding_dimensions: number | null;  // e.g., 1536
+  embedding_created_at: string | null;
   campaign_id: string | null;
   impressions: number | null;
   clicks: number | null;

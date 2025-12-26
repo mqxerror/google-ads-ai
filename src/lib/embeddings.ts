@@ -17,8 +17,26 @@ function getOpenAIClient(): OpenAI {
   return openaiClient;
 }
 
-// Embedding dimension for text-embedding-ada-002
+// Current embedding model configuration
+// Update these when migrating to a new embedding model
+export const EMBEDDING_MODEL = 'text-embedding-ada-002';
 export const EMBEDDING_DIMENSION = 1536;
+
+// Embedding metadata for storage
+export interface EmbeddingMetadata {
+  model: string;
+  dimensions: number;
+  createdAt: string;
+}
+
+// Get current embedding metadata
+export function getEmbeddingMetadata(): EmbeddingMetadata {
+  return {
+    model: EMBEDDING_MODEL,
+    dimensions: EMBEDDING_DIMENSION,
+    createdAt: new Date().toISOString(),
+  };
+}
 
 // Generate embedding for a single text
 export async function generateEmbedding(text: string): Promise<number[]> {

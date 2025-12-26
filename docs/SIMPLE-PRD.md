@@ -1,8 +1,8 @@
 # Quick Ads AI — Simplified Product Requirements Document
 
-**Version:** 2.0 (Vector-Powered Keyword Intelligence)
+**Version:** 2.1 (Savings-First AI Operator)
 **Last Updated:** December 2024
-**Status:** Current Implementation + Planned Features (Vector Store + Smart Campaign Creator)
+**Status:** Current Implementation + Planned Features
 
 ---
 
@@ -10,25 +10,29 @@
 
 This PRD documents **what Quick Ads AI actually is today** — a simple, fast Google Ads dashboard with AI assistance. It's written for a new team to understand the product without agency complexity.
 
+**Core Value Proposition:** "Stop wasting spend. Grow what works."
+
 ---
 
 ## 1. Product Overview
 
 ### What It Is
-**Quick Ads AI** is a single-page web application that lets users:
-1. View their Google Ads campaign performance at a glance
-2. Get AI-powered recommendations via chat
-3. Pause/Enable campaigns with one click
+**Quick Ads AI** is a web application with two modes:
+
+| Mode | Default | Purpose |
+|------|---------|---------|
+| **Monitor Mode** | ✓ Yes | Single-page dashboard + AI assistant + one-click toggles |
+| **Build Mode** | Optional | Smart Campaign Creator + keyword tools (power users) |
+
+This keeps the app "simple" for 80% of sessions while letting power users go deeper.
 
 ### What It Is NOT (Out of Scope)
 - Multi-account management (MCC)
 - Agency features
-- Campaign creation
-- Ad group/keyword/ad management
 - User settings or preferences
 - Team collaboration
 - Report generation
-- Autonomous optimization
+- Autonomous optimization (AI recommends, humans approve)
 
 ### Target User
 **Simple customer**: A business owner or marketer who runs Google Ads and wants quick visibility + AI help without complexity.
@@ -37,23 +41,38 @@ This PRD documents **what Quick Ads AI actually is today** — a simple, fast Go
 
 ## 2. Current Features
 
-### 2.1 Dashboard (Main Screen)
-Single page with two panels:
+### 2.1 Dashboard (Main Screen) — Monitor Mode
+
+Single page with two panels, designed to feel **smart without adding UI clutter**:
 
 **Left Panel — Campaign Overview**
 | Component | Description |
 |-----------|-------------|
 | Header | "Quick Ads AI" branding + tagline |
-| Stats Summary | 4 cards showing: Total Spend, Conversions, Active Campaigns, Avg AI Score |
-| Campaign Table | Sortable list with: Name, Status indicator, Spend, Conversions, CTR, CPA, AI Score, Action button |
+| Stats Summary | 4 cards: Total Spend, Conversions, Active Campaigns, Avg AI Score |
+| **Focus Filter** | Tab bar: `All` \| `Needs Attention` \| `Top Performers` \| `Wasted Spend` |
+| Campaign Table | Sortable list with smart inline context |
 
-**Right Panel — AI Assistant**
+**Campaign Table Enhancements:**
+| Feature | Description |
+|---------|-------------|
+| **Clickable AI Score** | Click score → side panel/popover showing top 2 drivers + recommended action |
+| **Row-level Microcopy** | Subtle one-liner under campaign name when score is low (e.g., "High CPA vs benchmark") |
+| **AI Highlights** | When AI recommends actions, relevant rows auto-highlight |
+
+**Right Panel — AI Assistant (Action Cockpit)**
 | Component | Description |
 |-----------|-------------|
 | Header | Sparkle icon + "AI Assistant" title |
 | Suggestion Chips | "Optimize my campaigns", "What should I pause?", "Show top performers" |
 | Chat Area | Scrollable message history with streaming responses |
+| **Action Cards** | AI responses include compact cards with Review button (not "Do it now") |
 | Input | Text field + Send button |
+
+**AI Chat Output Patterns:**
+- **Row Highlighting:** When user asks "what should I pause?", AI responds AND auto-highlights those campaigns in table
+- **Action Confirmation Cards:** Compact cards showing "Pause 2 campaigns → Est. savings $X/30 days" with `[Review]` button
+- **Benchmark Explainer:** When AI references benchmarks, tiny "based on what?" link shows explanation
 
 ### 2.2 Campaign Table Columns
 | Column | Data | Format |
@@ -68,22 +87,45 @@ Single page with two panels:
 | Action | Toggle button | "Pause" or "Enable" |
 
 ### 2.3 AI Score Calculation
-The AI Score is calculated from 4 factors, each compared against industry benchmarks by campaign type:
+
+The AI Score is calculated from 4 normalized factors (weights sum to 100%), each compared against industry benchmarks by campaign type:
 
 | Factor | Weight | What It Measures |
 |--------|--------|------------------|
-| CTR Performance | 25% | Click-through rate vs benchmark |
-| Conversion Efficiency | 25% | CPA vs benchmark |
+| CTR Performance | 30% | Click-through rate vs benchmark |
+| Conversion Efficiency | 30% | CPA vs benchmark |
 | Wasted Spend | 25% | Spend without conversions |
-| ROAS | 15% | Return on ad spend |
+| ROAS/Value Coverage | 15% | Return on ad spend (only if value data available) |
+
+**Data Confidence Modifier:**
+Low-volume campaigns shouldn't get aggressively scored from noise.
+
+| Data Points (clicks) | Confidence | Score Modifier |
+|---------------------|------------|----------------|
+| < 10 clicks | Low | Score pulls toward 50 (neutral) |
+| 10-50 clicks | Medium | Score scaled 75% toward calculated |
+| > 50 clicks | High | Full calculated score used |
+
+```typescript
+// Confidence adjustment formula
+const confidence = clicks < 10 ? 0.3 : clicks < 50 ? 0.75 : 1.0;
+const adjustedScore = 50 + (rawScore - 50) * confidence;
+```
 
 **Status Levels:**
 - `good` = Positive contribution to score
 - `warning` = Below benchmark but not critical
 - `critical` = Significant problem requiring action
 
+**Clickable Score UI:**
+When user clicks an AI Score, show a popover with:
+1. Top 2 score drivers (e.g., "CTR below benchmark", "$X wasted spend")
+2. One recommended action (e.g., "Consider pausing or reviewing keywords")
+3. Data confidence indicator
+
 ### 2.4 AI Chat
-- **Provider:** Claude (claude-3-5-sonnet) via Anthropic API
+- **Provider:** Claude via Anthropic API
+- **Model:** Configurable via `CLAUDE_MODEL` env var (default: `claude-sonnet-4-20250514`)
 - **Fallback:** Simulated responses when no API key
 - **Context:** AI receives current campaign data with each message
 - **Streaming:** Real-time response streaming via SSE
@@ -93,12 +135,13 @@ The AI Score is calculated from 4 factors, each compared against industry benchm
 - Recommend which campaigns to pause
 - Identify top performers to scale
 - Answer questions about the data
+- **Highlight table rows** when recommending actions
+- **Show action cards** with estimated impact
 
 **AI Cannot:**
-- Execute actions directly
+- Execute actions directly (always requires user approval)
 - Access historical data
-- Manage keywords/ads
-- Create campaigns
+- Manage keywords/ads autonomously
 
 ---
 
@@ -156,15 +199,23 @@ src/
 
 ### 3.5 Environment Variables
 ```
+# Authentication
 GOOGLE_CLIENT_ID=           # Google OAuth client ID
 GOOGLE_CLIENT_SECRET=       # Google OAuth client secret
 GOOGLE_ADS_DEVELOPER_TOKEN= # Google Ads API token
 GOOGLE_ADS_LOGIN_CUSTOMER_ID= # Manager account ID (optional)
 NEXTAUTH_URL=               # App URL for OAuth
 NEXTAUTH_SECRET=            # Session encryption key
+
+# AI Configuration
 ANTHROPIC_API_KEY=          # Claude API key
+CLAUDE_MODEL=               # Model ID (default: claude-sonnet-4-20250514)
+
+# App Mode
 DEMO_MODE=                  # true/false for demo mode
 ```
+
+**Note:** `CLAUDE_MODEL` should be updated when Anthropic releases new models. Always log the active model in `/api/ai/chat` responses for debugging.
 
 ---
 
@@ -295,31 +346,47 @@ The current implementation doesn't require a database for core functionality. Al
 
 ---
 
-## 10. Planned Features: Keyword Research & Negative Keyword AI
+## 10. Planned Features: Savings-First Keyword Intelligence
 
-Based on competitive analysis of AdAlchemy, enhanced with **vector store semantic search** for intelligent keyword discovery.
+**Design Philosophy:** Every feature anchors to one universal outcome: **"Stop wasting spend. Grow what works."**
 
-### 10.1 Vector Store Architecture (Core)
+The keyword tools are NOT positioned as "vector search" or "clustering tools" — they're positioned as **savings finders** that use AI under the hood.
+
+### 10.1 Vector Store Architecture (Infrastructure)
+
+> **User-facing narrative:** "We find wasted spend by understanding what your keywords actually mean."
+> **Technical reality:** Vector embeddings power semantic matching.
 
 **Purpose:** Store all keywords as vector embeddings in Supabase for semantic search, clustering, and opportunity discovery.
 
-**Why Vector Store?**
+**Why Vector Store (Technical):**
 - Find semantically similar keywords (not just string matching)
 - Discover keyword opportunities based on meaning
 - Cluster keywords by semantic similarity automatically
 - Identify gaps in keyword coverage
 - Cross-reference search terms with existing keywords
 
+**Embedding Metadata (for model migration):**
+Every vector row stores:
+- `embedding_model` — e.g., "text-embedding-ada-002"
+- `embedding_dimensions` — e.g., 1536
+- `embedding_created_at` — timestamp
+
+This allows incremental re-embedding when switching models.
+
 **Supabase Setup:**
 ```sql
 -- Enable pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- Keywords table with embeddings
+-- Keywords table with embeddings + model metadata
 CREATE TABLE keywords (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   keyword TEXT NOT NULL,
   embedding VECTOR(1536),  -- OpenAI ada-002 dimension
+  embedding_model TEXT DEFAULT 'text-embedding-ada-002',
+  embedding_dimensions INTEGER DEFAULT 1536,
+  embedding_created_at TIMESTAMPTZ,
   campaign_id TEXT,
   ad_group_id TEXT,
   match_type TEXT,  -- BROAD, PHRASE, EXACT
@@ -334,11 +401,14 @@ CREATE TABLE keywords (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Search terms table (from Google Ads)
+-- Search terms table (from Google Ads) with embedding metadata
 CREATE TABLE search_terms (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   search_term TEXT NOT NULL,
   embedding VECTOR(1536),
+  embedding_model TEXT DEFAULT 'text-embedding-ada-002',
+  embedding_dimensions INTEGER DEFAULT 1536,
+  embedding_created_at TIMESTAMPTZ,
   campaign_id TEXT,
   impressions INTEGER,
   clicks INTEGER,
@@ -461,25 +531,39 @@ LIMIT 20;
 
 ---
 
-### 10.3 Negative Keywords Manager (Selection-Based)
+### 10.3 Negative Keywords Manager (Savings-First)
 
 **Purpose:** AI-powered identification and management of negative keywords with quick selection-based approval.
 
-**UX Flow:**
+> **Key UX Principle:** Lead with ROI, not clusters. The first thing users see is **potential savings**, not technical features.
+
+**Default View — Wasted Spend Patterns:**
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Negative Keywords Suggestions                    [Approve All] │
+│  🎯 Potential Savings This Month                                │
+│                                                                 │
+│     💰 $523.00                                                  │
+│     from 6 negative keyword patterns                            │
+│                                                                 │
 ├─────────────────────────────────────────────────────────────────┤
-│  ☑ "free"          Low commercial intent           95% conf    │
-│  ☑ "jobs"          Employment intent, not buyer    92% conf    │
-│  ☑ "how to"        Research intent                 88% conf    │
-│  ☐ "cheap"         Price-sensitive (might want)    75% conf    │
-│  ☑ "salary"        Employment intent               90% conf    │
-│  ☑ "download"      Free-seeker intent              87% conf    │
+│  Suggested Negatives                              [Approve All] │
 ├─────────────────────────────────────────────────────────────────┤
-│  Selected: 5 of 6                    [Apply to Campaign]        │
+│  ☑ "free"          12 search terms   $145.50 wasted   95% conf │
+│  ☑ "jobs"          8 search terms    $98.20 wasted    92% conf │
+│  ☑ "how to"        15 search terms   $87.30 wasted    88% conf │
+│  ☐ "cheap"         5 search terms    $62.00 wasted    75% conf │
+│  ☑ "salary"        6 search terms    $78.50 wasted    90% conf │
+│  ☑ "download"      9 search terms    $51.50 wasted    87% conf │
+├─────────────────────────────────────────────────────────────────┤
+│  Selected: 5 of 6 ($461.00 savings)    [Apply to Campaign]      │
 └─────────────────────────────────────────────────────────────────┘
+
+Tabs: [ Suggested ] [ Applied ] [ Clusters (Advanced) ]
 ```
+
+**Why Savings-First:**
+- If you lead with "clusters," you feel like a keyword tool
+- If you lead with "savings," you feel like an AI operator that prints money
 
 **UI Components:**
 | Component | Description |
@@ -562,9 +646,11 @@ ORDER BY st.cost DESC;
 
 ---
 
-### 10.4 Smart Campaign Creation Tool
+### 10.4 Smart Campaign Creation Tool — Build Mode
 
 **Purpose:** AI-powered campaign builder that creates optimized campaigns from a simple business description.
+
+> **UX Philosophy:** Simplify the wizard into a single "draft" moment. Same underlying pipeline, much less perceived complexity.
 
 **What Makes It Smart:**
 1. **Scans landing page** for content, keywords, and value propositions (Crawl4AI + Claude)
@@ -653,89 +739,59 @@ ORDER BY st.cost DESC;
 }
 ```
 
-**User Flow:**
+**User Flow — Single Draft Moment:**
+
+Instead of a 5-step wizard, the user gets one input → one AI-generated draft → progressive disclosure to edit.
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Step 1: Tell us about your business                                │
+│  🚀 Create Smart Campaign                                           │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Business/Product: [Portugal Golden Visa consulting services     ]  │
-│  Website URL:      [https://mercan.com/portugal-golden-visa      ]  │
-│                    [🔍 Scan Landing Page]  ← Click to analyze       │
-│  Target Location:  [United States                                ]  │
-│  Goal:             (○) Leads  (●) Sales  (○) Traffic                │
-│                                                         [Analyze →] │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  Step 2: Review AI-Generated Keywords (127 found)                   │
-├─────────────────────────────────────────────────────────────────────┤
-│  ┌─ Ad Group: "Golden Visa Portugal" (24 keywords) ──────────────┐  │
-│  │  ☑ golden visa portugal              Vol: 12K   CPC: $4.50    │  │
-│  │  ☑ portugal golden visa program      Vol: 8K    CPC: $5.20    │  │
-│  │  ☑ portugal golden visa requirements Vol: 6K    CPC: $3.80    │  │
-│  │  [Show 21 more...]                                            │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-│  ┌─ Ad Group: "Portugal Citizenship" (18 keywords) ──────────────┐  │
-│  │  ☑ portugal citizenship by investment Vol: 5K   CPC: $6.10    │  │
-│  │  ☑ buy portugal citizenship           Vol: 3K   CPC: $7.50    │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-│  [+ Add more keywords]  [Remove low-intent]           [Continue →]  │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  Step 3: Review AI-Generated Ads                                    │
-├─────────────────────────────────────────────────────────────────────┤
-│  Ad Group: "Golden Visa Portugal"                                   │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │  Headlines (15):                                               │  │
-│  │  • Portugal Golden Visa 2024                                   │  │
-│  │  • Get EU Residency Fast                                       │  │
-│  │  • €500K Investment Required                                   │  │
-│  │  [Edit] [Regenerate]                                           │  │
-│  │                                                                │  │
-│  │  Descriptions (4):                                             │  │
-│  │  • Obtain Portuguese residency through investment. Expert      │  │
-│  │    guidance from application to approval. Free consultation.   │  │
-│  │  [Edit] [Regenerate]                                           │  │
-│  └───────────────────────────────────────────────────────────────┘  │
-│                                                       [Continue →]  │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  Step 4: Budget & Bidding                                           │
-├─────────────────────────────────────────────────────────────────────┤
-│  Recommended Daily Budget: $150/day (based on competition)          │
-│  Your Budget: [$100        ]/day                                    │
+│  What's your business?                                              │
+│  [Portugal Golden Visa consulting services                       ]  │
 │                                                                     │
-│  Bidding Strategy:                                                  │
-│  (●) Smart Bidding (Maximize Conversions)                           │
-│  (○) Manual CPC with AI suggestions                                 │
-│  (○) Target CPA: $[____]                                            │
+│  Landing Page URL (optional):                                       │
+│  [https://mercan.com/portugal-golden-visa                        ]  │
 │                                                                     │
-│  AI Bid Suggestions by Intent:                                      │
-│  • Commercial keywords: +20% bid adjustment                         │
-│  • Transactional keywords: +30% bid adjustment                      │
-│  • Informational keywords: -40% bid adjustment                      │
-│                                                       [Continue →]  │
+│  Goal:  (○) Leads  (●) Sales  (○) Traffic                          │
+│                                                                     │
+│                              [✨ Generate Draft Campaign]           │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
+                    (AI generates everything in ~30 seconds)
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Step 5: Review & Launch                                            │
-├─────────────────────────────────────────────────────────────────────┤
-│  Campaign: "Portugal Golden Visa - US"                              │
-│  ├─ Ad Groups: 5                                                    │
-│  ├─ Keywords: 127 (98 commercial, 29 informational)                 │
-│  ├─ Negative Keywords: 45 (auto-applied)                            │
-│  ├─ Responsive Search Ads: 5                                        │
-│  ├─ Daily Budget: $100                                              │
-│  └─ Estimated Monthly Spend: $3,000                                 │
+│  📋 Draft Campaign: "Portugal Golden Visa - US"                     │
 │                                                                     │
-│  [← Edit]  [Save as Draft]  [🚀 Launch Campaign]                    │
+│  ┌─ Summary ─────────────────────────────────────────────────────┐  │
+│  │  📊 5 Ad Groups  │  🔑 127 Keywords  │  🚫 45 Negatives       │  │
+│  │  💰 $100/day suggested  │  📈 Est. 15-25 leads/month          │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+│  ▸ Ad Groups & Keywords (127 total)               [Expand to edit]  │
+│  ▸ Ad Copy (15 headlines, 4 descriptions)         [Expand to edit]  │
+│  ▸ Negative Keywords (45 auto-applied)            [Expand to edit]  │
+│  ▸ Budget & Bidding ($100/day recommended)        [Expand to edit]  │
+│                                                                     │
+│  [Save as Draft]              [🚀 Launch Campaign]                  │
 └─────────────────────────────────────────────────────────────────────┘
+```
+
+**Progressive Disclosure:** Users only expand sections they want to customize. Most users just click "Launch Campaign" after reviewing the summary.
+
+**Expanded Section Example:**
+```
+▾ Ad Groups & Keywords (127 total)
+  ┌─ Golden Visa Portugal (24 keywords) ─────────────────────────────┐
+  │  ☑ golden visa portugal              Vol: 12K   CPC: $4.50       │
+  │  ☑ portugal golden visa program      Vol: 8K    CPC: $5.20       │
+  │  ☑ portugal golden visa requirements Vol: 6K    CPC: $3.80       │
+  │  [Show 21 more...]                                               │
+  └──────────────────────────────────────────────────────────────────┘
+  ┌─ Portugal Citizenship (18 keywords) ─────────────────────────────┐
+  │  ...                                                             │
+  └──────────────────────────────────────────────────────────────────┘
+  [+ Add keywords]  [Remove low-intent]
 ```
 
 **AI Generation Pipeline:**
