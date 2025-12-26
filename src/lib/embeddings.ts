@@ -17,15 +17,30 @@ function getOpenAIClient(): OpenAI {
   return openaiClient;
 }
 
-// Current embedding model configuration
-// Update these when migrating to a new embedding model
-export const EMBEDDING_MODEL = 'text-embedding-ada-002';
-export const EMBEDDING_DIMENSION = 1536;
+// =============================================================================
+// EMBEDDING MODEL CONFIGURATION
+// =============================================================================
+// text-embedding-3-small: $0.00002/1K tokens (62% cheaper than ada-002)
+// text-embedding-3-large: $0.00013/1K tokens (higher quality)
+// text-embedding-ada-002: $0.0001/1K tokens (legacy)
+// =============================================================================
 
-// Embedding metadata for storage
+export const EMBEDDING_MODEL = 'text-embedding-3-small';
+export const EMBEDDING_DIMENSION = 1536; // Can be 512, 1024, or 1536 for text-embedding-3-*
+export const EMBEDDING_VERSION = '2'; // Increment when changing models
+
+// Supported models for migration
+export const SUPPORTED_MODELS = {
+  'text-embedding-3-small': { dimensions: [512, 1024, 1536], costPer1K: 0.00002 },
+  'text-embedding-3-large': { dimensions: [256, 1024, 3072], costPer1K: 0.00013 },
+  'text-embedding-ada-002': { dimensions: [1536], costPer1K: 0.0001 },
+} as const;
+
+// Embedding metadata for storage (with versioning)
 export interface EmbeddingMetadata {
   model: string;
   dimensions: number;
+  version: string;
   createdAt: string;
 }
 
@@ -34,40 +49,131 @@ export function getEmbeddingMetadata(): EmbeddingMetadata {
   return {
     model: EMBEDDING_MODEL,
     dimensions: EMBEDDING_DIMENSION,
+    version: EMBEDDING_VERSION,
     createdAt: new Date().toISOString(),
   };
 }
 
-// Generate embedding for a single text
+// Check if embedding needs re-generation (model mismatch)
+export function needsReembedding(storedModel: string, storedVersion?: string): boolean {
+  return storedModel !== EMBEDDING_MODEL || (storedVersion && storedVersion !== EMBEDDING_VERSION);
+}
+
+// =============================================================================
+// IN-MEMORY CACHE (for frequently accessed embeddings)
+// =============================================================================
+const embeddingCache = new Map<string, { embedding: number[]; timestamp: number }>();
+const CACHE_TTL = 1000 * 60 * 60; // 1 hour TTL
+const MAX_CACHE_SIZE = 1000; // Max cached embeddings
+
+function getCacheKey(text: string): string {
+  return `${EMBEDDING_MODEL}:${EMBEDDING_VERSION}:${text.toLowerCase().trim()}`;
+}
+
+function getFromCache(text: string): number[] | null {
+  const key = getCacheKey(text);
+  const cached = embeddingCache.get(key);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.embedding;
+  }
+  if (cached) {
+    embeddingCache.delete(key); // Expired
+  }
+  return null;
+}
+
+function setInCache(text: string, embedding: number[]): void {
+  // Evict oldest entries if cache is full
+  if (embeddingCache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = embeddingCache.keys().next().value;
+    if (oldestKey) embeddingCache.delete(oldestKey);
+  }
+  const key = getCacheKey(text);
+  embeddingCache.set(key, { embedding, timestamp: Date.now() });
+}
+
+// Cache stats for monitoring
+export function getCacheStats(): { size: number; maxSize: number; hitRate: string } {
+  return {
+    size: embeddingCache.size,
+    maxSize: MAX_CACHE_SIZE,
+    hitRate: 'N/A', // Would need hit/miss counters for accurate rate
+  };
+}
+
+// Clear cache (useful when switching models)
+export function clearEmbeddingCache(): void {
+  embeddingCache.clear();
+}
+
+// =============================================================================
+// EMBEDDING GENERATION
+// =============================================================================
+
+// Generate embedding for a single text (with caching)
 export async function generateEmbedding(text: string): Promise<number[]> {
+  const normalizedText = text.trim().toLowerCase();
+
+  // Check cache first
+  const cached = getFromCache(normalizedText);
+  if (cached) {
+    return cached;
+  }
+
   const client = getOpenAIClient();
 
   const response = await client.embeddings.create({
-    model: 'text-embedding-ada-002',
-    input: text.trim().toLowerCase(),
+    model: EMBEDDING_MODEL,
+    input: normalizedText,
+    dimensions: EMBEDDING_DIMENSION, // text-embedding-3-* supports custom dimensions
   });
 
-  return response.data[0].embedding;
+  const embedding = response.data[0].embedding;
+
+  // Cache the result
+  setInCache(normalizedText, embedding);
+
+  return embedding;
 }
 
-// Generate embeddings for multiple texts (batch processing)
+// Generate embeddings for multiple texts (batch processing with caching)
 export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) {
     return [];
   }
 
   const client = getOpenAIClient();
+  const normalizedTexts = texts.map(t => t.trim().toLowerCase());
 
+  // Check cache for each text
+  const results: (number[] | null)[] = normalizedTexts.map(t => getFromCache(t));
+  const uncachedIndices: number[] = [];
+  const uncachedTexts: string[] = [];
+
+  results.forEach((result, index) => {
+    if (result === null) {
+      uncachedIndices.push(index);
+      uncachedTexts.push(normalizedTexts[index]);
+    }
+  });
+
+  // If all cached, return early
+  if (uncachedTexts.length === 0) {
+    return results as number[][];
+  }
+
+  // Batch process uncached texts
   // OpenAI supports up to 2048 inputs per request
   const BATCH_SIZE = 2048;
-  const allEmbeddings: number[][] = [];
+  const newEmbeddings: number[][] = [];
 
-  for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-    const batch = texts.slice(i, i + BATCH_SIZE).map(t => t.trim().toLowerCase());
+  for (let i = 0; i < uncachedTexts.length; i += BATCH_SIZE) {
+    const batch = uncachedTexts.slice(i, i + BATCH_SIZE);
 
     const response = await client.embeddings.create({
-      model: 'text-embedding-ada-002',
+      model: EMBEDDING_MODEL,
       input: batch,
+      dimensions: EMBEDDING_DIMENSION,
     });
 
     // Sort by index to ensure order is preserved
@@ -75,10 +181,18 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
       .sort((a, b) => a.index - b.index)
       .map(item => item.embedding);
 
-    allEmbeddings.push(...sortedEmbeddings);
+    newEmbeddings.push(...sortedEmbeddings);
   }
 
-  return allEmbeddings;
+  // Cache new embeddings and fill results
+  newEmbeddings.forEach((embedding, i) => {
+    const originalIndex = uncachedIndices[i];
+    const text = uncachedTexts[i];
+    setInCache(text, embedding);
+    results[originalIndex] = embedding;
+  });
+
+  return results as number[][];
 }
 
 // Calculate cosine similarity between two vectors
