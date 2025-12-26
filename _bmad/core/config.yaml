@@ -1,0 +1,19 @@
+# BMAD Core Configuration
+# Auto-generated configuration file
+
+# Project Information
+project_name: "Google Ads AI"
+user_name: "User"
+
+# Language Settings
+communication_language: "English"
+document_output_language: "English"
+
+# User Skill Level (beginner, intermediate, advanced)
+user_skill_level: "intermediate"
+
+# Output Directory
+output_folder: "{project-root}/docs/bmad"
+
+# Sprint Artifacts Directory
+sprint_artifacts: "{project-root}/docs/bmad/sprints"
