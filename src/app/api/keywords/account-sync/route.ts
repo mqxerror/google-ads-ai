@@ -4,8 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { auth } from '@/lib/auth';
 import {
   fetchAllCampaignKeywords,
   fetchKeywordPerformance,
@@ -19,7 +18,7 @@ import type { SyncAccountResult } from '@/lib/database/types';
 export async function POST(request: NextRequest) {
   try {
     // Check authentication
-    const session = await getServerSession(authOptions);
+    const session = await auth();
     if (!session?.accessToken) {
       return NextResponse.json(
         { error: 'Unauthorized - no access token' },
@@ -198,7 +197,7 @@ export async function POST(request: NextRequest) {
 // GET endpoint to check sync status
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await auth();
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
