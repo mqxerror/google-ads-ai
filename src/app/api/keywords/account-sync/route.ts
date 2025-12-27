@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
                 conversions: perf.conversions,
                 costMicros: Math.round(perf.cost * 1_000_000),
                 ctr: perf.ctr,
-                qualityScore: perf.qualityScore,
+                qualityScore: perf.qualityScore ?? undefined,
               };
             });
 
