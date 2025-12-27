@@ -315,6 +315,20 @@ export default function Home() {
                     </div>
                   </Link>
                   <Link
+                    href="/campaigns/create"
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors bg-accent/5 border-l-2 border-accent"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-accent/20 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-accent">Create Campaign</p>
+                      <p className="text-xs text-text3">AI-powered campaign wizard</p>
+                    </div>
+                  </Link>
+                  <Link
                     href="/keyword-factory"
                     className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors"
                   >
@@ -732,6 +746,30 @@ export default function Home() {
                       <p className="text-xs text-text2">Check speed, relevance & CTAs</p>
                     </div>
                     <svg className="w-4 h-4 text-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </Link>
+
+                {/* Create Campaign - NEW! */}
+                <Link
+                  href="/campaigns/create"
+                  className="insight-card p-4 bg-gradient-to-br from-accent to-purple-500 rounded-xl border border-accent/50 block hover:shadow-lg transition-all relative overflow-hidden group"
+                >
+                  <div className="absolute top-2 right-2 px-2 py-0.5 bg-white/20 rounded text-xs text-white font-medium">
+                    NEW
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-white">Create Campaign</p>
+                      <p className="text-xs text-white/80">AI-powered 5-step wizard</p>
+                    </div>
+                    <svg className="w-4 h-4 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   </div>
