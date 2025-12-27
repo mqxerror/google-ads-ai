@@ -11,7 +11,7 @@ import { updateSerpOpportunityStatus, getUserIdFromEmail } from '@/lib/database/
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     // Authenticate
@@ -26,7 +26,7 @@ export async function POST(
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    const opportunityId = params.id;
+    const { id: opportunityId } = await params;
 
     // Parse optional reason from body
     const body = await request.json().catch(() => ({}));
