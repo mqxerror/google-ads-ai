@@ -8,6 +8,7 @@ import KeywordDetailModal from './components/KeywordDetailModal';
 import KeywordTable from './components/KeywordTable';
 import TrackRankingsModal from './components/TrackRankingsModal';
 import TrackSuccessModal from './components/TrackSuccessModal';
+import CampaignWizard from '@/components/campaigns/CampaignWizard';
 
 interface GeneratedKeyword {
   keyword: string;
@@ -158,6 +159,9 @@ export default function KeywordFactoryPage() {
   // Campaigns for bulk actions
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
+
+  // Campaign wizard
+  const [showCampaignWizard, setShowCampaignWizard] = useState(false);
 
   const isAuthenticated = status === 'authenticated' && session?.user;
 
@@ -359,36 +363,13 @@ export default function KeywordFactoryPage() {
   async function handleCreateCampaign() {
     const selected = keywords.filter(k => selectedKeywords.has(k.keyword));
 
-    try {
-      // TODO: Implement actual campaign creation flow
-      const campaignName = prompt(`Create campaign with ${selected.length} keywords. Enter campaign name:`);
-
-      if (!campaignName) {
-        return; // User cancelled
-      }
-
-      const response = await fetch('/api/google-ads/create-campaign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: campaignName,
-          keywords: selected.map(k => ({
-            keyword: k.keyword,
-            matchType: k.suggestedMatchType,
-          })),
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to create campaign');
-      }
-
-      alert(`Successfully created campaign "${campaignName}" with ${selected.length} keywords`);
-      setSelectedKeywords(new Set());
-    } catch (error) {
-      console.error('Error creating campaign:', error);
-      alert('Failed to create campaign. Feature coming soon!');
+    if (selected.length === 0) {
+      alert('Please select at least one keyword to create a campaign');
+      return;
     }
+
+    // Open campaign wizard with selected keywords
+    setShowCampaignWizard(true);
   }
 
   async function handleTrackInSERP() {
@@ -1214,6 +1195,16 @@ export default function KeywordFactoryPage() {
         keywordCount={trackingKeywordCount}
         onClose={() => setShowSuccessModal(false)}
         onViewDashboard={handleViewDashboard}
+      />
+
+      {/* Campaign Wizard */}
+      <CampaignWizard
+        isOpen={showCampaignWizard}
+        onClose={() => {
+          setShowCampaignWizard(false);
+          setSelectedKeywords(new Set()); // Clear selection after wizard closes
+        }}
+        preSelectedKeywords={keywords.filter(k => selectedKeywords.has(k.keyword))}
       />
     </div>
   );
