@@ -131,14 +131,27 @@ export async function GET(request: NextRequest) {
         }
 
         // Test 1d: Increment cache hit (triggers dynamic TTL)
-        const { error: updateError } = await client
+        // First fetch current value
+        const { data: currentData, error: fetchError } = await client
           .from('keyword_metrics')
-          .update({
-            cache_hit_count: client.raw('cache_hit_count + 5'),
-          })
+          .select('cache_hit_count')
           .eq('keyword_normalized', 'running shoes')
           .eq('locale', 'en-US')
-          .eq('device', 'desktop');
+          .eq('device', 'desktop')
+          .single();
+
+        let updateError = fetchError;
+        if (!fetchError && currentData) {
+          const { error: err } = await client
+            .from('keyword_metrics')
+            .update({
+              cache_hit_count: (currentData.cache_hit_count || 0) + 5,
+            })
+            .eq('keyword_normalized', 'running shoes')
+            .eq('locale', 'en-US')
+            .eq('device', 'desktop');
+          updateError = err;
+        }
 
         if (updateError) {
           results.push({

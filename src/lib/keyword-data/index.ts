@@ -556,10 +556,10 @@ function convertToKeywordMetrics(
       nlp_entities: googleApisData.nlp?.entities ? JSON.parse(JSON.stringify(googleApisData.nlp.entities)) : null,
       nlp_fetched_at: new Date(),
       nlp_status: googleApisData.nlp ? 'success' : 'pending',
-    };
+    } as any;
   }
 
-  return baseMetrics;
+  return baseMetrics as any;
 }
 
 /**

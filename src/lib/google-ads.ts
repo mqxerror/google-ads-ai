@@ -442,7 +442,7 @@ export async function fetchKeywordPlannerMetrics(
           },
           // IMPORTANT: Request maximum results (default is ~100-200, max is 10000)
           page_size: 10000,
-        });
+        } as any);
 
         // Response is an array directly, not { results: [...] }
         const results = Array.isArray(response) ? response : (response.results || []);
@@ -687,5 +687,5 @@ export async function matchKeywordsAgainstAccount(
 
   const matchMap = await getAccountKeywordsBatch(userId, customerId, keywords);
 
-  return matchMap;
+  return matchMap as unknown as Map<string, AccountKeyword[]>;
 }

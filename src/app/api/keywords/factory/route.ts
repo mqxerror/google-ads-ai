@@ -69,6 +69,27 @@ interface GeneratedKeyword {
     cacheAge: number;
   };
   opportunityScore?: number;
+  googleApisData?: {
+    keyword: string;
+    trends?: {
+      direction: 'rising' | 'declining' | 'stable' | 'breakout';
+      interestScore: number;
+      trendingScore: number;
+      peakMonth?: string;
+    };
+    youtube?: {
+      videoCount: number;
+      avgViews: number;
+      topTags: string[];
+      contentGap: boolean;
+      gapScore: number;
+    };
+    nlp?: {
+      intent: 'transactional' | 'informational' | 'commercial' | 'navigational';
+      intentConfidence: number;
+      entities: Array<{ name: string; type: string }>;
+    };
+  };
 }
 
 interface KeywordCluster {

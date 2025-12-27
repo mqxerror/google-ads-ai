@@ -281,7 +281,7 @@ export async function deleteTrackedKeyword(id: string, userId: string): Promise<
     [id, userId]
   );
 
-  return result.rowCount > 0;
+  return (result.rowCount ?? 0) > 0;
 }
 
 /**
@@ -605,7 +605,7 @@ export async function expireOldOpportunities(): Promise<number> {
     `
   );
 
-  return result.rowCount;
+  return result.rowCount ?? 0;
 }
 
 // ============================================================================

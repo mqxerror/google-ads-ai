@@ -180,7 +180,7 @@ export async function POST(request: NextRequest) {
 // GET endpoint for single keyword summary
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await auth();
     if (!session?.user?.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

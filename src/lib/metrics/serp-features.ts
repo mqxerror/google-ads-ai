@@ -220,6 +220,7 @@ function parseDataForSeoResponse(data: DataForSeoSerpResponse): SerpFeatures {
   return {
     keyword: data.keyword || '',
     locationId: data.location_code?.toString() || '2840',
+    device: 'desktop' as const,
 
     features: {
       featuredSnippet: hasFeaturedSnippet,
@@ -294,6 +295,7 @@ async function getCachedSerpFeatures(
     const features: SerpFeatures = {
       keyword: keyword,
       locationId: locationId,
+      device: 'desktop' as const,
       features: {
         featuredSnippet: row.has_featured_snippet,
         knowledgePanel: row.has_knowledge_panel,
@@ -442,6 +444,7 @@ export async function analyzeSerpFeatures(
     const defaultFeatures: SerpFeatures = {
       keyword,
       locationId,
+      device: device as any,
       features: {
         featuredSnippet: false,
         knowledgePanel: false,
