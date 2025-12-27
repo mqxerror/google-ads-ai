@@ -56,7 +56,7 @@ export function getEmbeddingMetadata(): EmbeddingMetadata {
 
 // Check if embedding needs re-generation (model mismatch)
 export function needsReembedding(storedModel: string, storedVersion?: string): boolean {
-  return storedModel !== EMBEDDING_MODEL || (storedVersion && storedVersion !== EMBEDDING_VERSION);
+  return storedModel !== EMBEDDING_MODEL || (storedVersion !== undefined && storedVersion !== EMBEDDING_VERSION);
 }
 
 // =============================================================================

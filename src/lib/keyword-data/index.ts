@@ -7,18 +7,20 @@
  * Flow:
  * 1. Check cache (in-memory + database)
  * 2. Fetch from Google Ads Keyword Planner (primary source)
- * 3. Optionally fetch from Moz (difficulty, intent)
- * 4. Optionally fetch from DataForSEO (fallback/supplement)
- * 5. Merge metrics with priority: Google Ads > DataForSEO > Moz
- * 6. Calculate opportunity scores
- * 7. Store in cache with dynamic TTL
- * 8. Return enriched keywords with stats
+ * 3. Fetch from Google APIs (Trends, YouTube, NLP)
+ * 4. Optionally fetch from Moz (difficulty, intent)
+ * 5. Optionally fetch from DataForSEO (fallback/supplement)
+ * 6. Merge metrics with priority: Google Ads > DataForSEO > Moz
+ * 7. Calculate opportunity scores (including Trends, YouTube, NLP data)
+ * 8. Store in cache with dynamic TTL
+ * 9. Return enriched keywords with stats
  */
 
 import { fetchKeywordPlannerMetrics } from '../google-ads';
 import { fetchDataForSEOMetrics } from './dataforseo';
 import { fetchKeywordMetrics as fetchMozMetrics } from '../moz';
 import { getMozCircuitBreaker } from './circuit-breaker';
+import { enrichWithGoogleAPIs, calculateCompositeScore, type EnrichedKeywordData } from '../google-apis/orchestrator';
 import {
   batchLookupCache,
   batchStoreInCache,
@@ -88,10 +90,13 @@ export async function enrichKeywordsWithMetrics(
       await incrementCacheHit(keyword, locale, device, locationId);
     }
 
-    keywordsToFetch = cacheResult.misses;
+    // CRITICAL FIX: Include stale entries in keywords to fetch
+    // Stale = expired cache entries that need fresh data
+    const staleKeywords = Array.from(cacheResult.stale.keys());
+    keywordsToFetch = [...cacheResult.misses, ...staleKeywords];
     stats.cached = cacheHits.size;
 
-    console.log(`[KeywordEnrichment] Cache: ${cacheHits.size} hits, ${keywordsToFetch.length} misses`);
+    console.log(`[KeywordEnrichment] Cache: ${cacheHits.size} hits, ${staleKeywords.length} stale (need refresh), ${cacheResult.misses.length} misses`);
   } else {
     keywordsToFetch = keywords;
   }
@@ -104,17 +109,18 @@ export async function enrichKeywordsWithMetrics(
   }
 
   // Step 2: Fetch from Google Ads (primary source)
-  console.log('[KeywordEnrichment] DEBUG:', {
+  console.log('[KeywordEnrichment] DEBUG - Step 2 Google Ads:', {
     hasGoogleAdsProvider: providers.includes('google_ads'),
     hasRefreshToken: !!refreshToken,
     hasCustomerId: !!customerId,
     providers: providers,
-    keywordsToFetch: keywordsToFetch.length,
+    keywordsToFetchCount: keywordsToFetch.length,
+    keywordsToFetch: keywordsToFetch,
   });
 
   if (providers.includes('google_ads') && refreshToken && customerId) {
     try {
-      console.log('[KeywordEnrichment] Fetching from Google Ads:', keywordsToFetch.length, 'keywords');
+      console.log('[KeywordEnrichment] ✓ Calling Google Ads API for', keywordsToFetch.length, 'keywords:', keywordsToFetch);
 
       const googleMetrics = await fetchKeywordPlannerMetrics(
         refreshToken,
@@ -164,7 +170,45 @@ export async function enrichKeywordsWithMetrics(
     }
   }
 
-  // Step 3: Fetch from Moz (difficulty, intent) in parallel if requested
+  // Step 3: Fetch from Google APIs (Trends, YouTube, NLP)
+  let googleApisData = new Map<string, EnrichedKeywordData>();
+
+  try {
+    console.log('[KeywordEnrichment] Fetching Google APIs data (Trends, YouTube, NLP)');
+
+    // Get country code from locationId (simplified mapping)
+    const countryMap: Record<string, string> = {
+      '2840': 'US', // United States
+      '2826': 'GB', // United Kingdom
+      '2124': 'CA', // Canada
+      '2036': 'AU', // Australia
+    };
+    const geo = countryMap[locationId] || 'US';
+
+    googleApisData = await enrichWithGoogleAPIs(
+      Array.from(enriched.keys()), // Enrich all keywords we have so far
+      {
+        useTrends: true,
+        useYouTube: true,
+        useNLP: true,
+        youtubeApiKey: process.env.YOUTUBE_API_KEY,
+        nlpApiKey: process.env.GOOGLE_NLP_API_KEY,
+        geo,
+        useCache: true,
+      }
+    );
+
+    console.log(`[KeywordEnrichment] Google APIs: ${googleApisData.size} keywords enriched with Trends/YouTube/NLP`);
+  } catch (error) {
+    console.error('[KeywordEnrichment] Google APIs error:', error);
+    stats.errors.push({
+      keyword: 'batch',
+      provider: 'google_apis',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+
+  // Step 4: Fetch from Moz (difficulty, intent) in parallel if requested
   if (providers.includes('moz') && mozToken) {
     try {
       console.log('[KeywordEnrichment] Fetching from Moz:', keywordsToFetch.length, 'keywords');
@@ -304,10 +348,27 @@ export async function enrichKeywordsWithMetrics(
     }
   }
 
-  // Step 5: Calculate opportunity scores
+  // Step 5: Calculate opportunity scores (including Google APIs data)
   for (const [keyword, data] of enriched) {
     if (data.metrics) {
-      data.opportunityScore = calculateOpportunityScore(data.metrics);
+      // Get Google APIs enrichment data for this keyword
+      const googleApiData = googleApisData.get(keyword);
+
+      // Use composite score if we have Google APIs data, otherwise use basic score
+      if (googleApiData) {
+        data.opportunityScore = calculateCompositeScore(googleApiData, {
+          searchVolume: data.metrics.searchVolume || 0,
+          cpc: data.metrics.cpc || 0,
+          competition: data.metrics.competition || 'MEDIUM',
+        });
+      } else {
+        data.opportunityScore = calculateOpportunityScore(data.metrics);
+      }
+
+      // Store Google APIs data for caching
+      if (googleApiData) {
+        (data as any).googleApisData = googleApiData;
+      }
     }
   }
 
@@ -430,6 +491,8 @@ function convertToKeywordMetrics(
   locationId: string
 ): Partial<KeywordMetrics> {
   const metrics = enriched.metrics;
+  const googleApisData = (enriched as any).googleApisData as EnrichedKeywordData | undefined;
+
   if (!metrics) {
     return {
       keyword,
@@ -441,7 +504,8 @@ function convertToKeywordMetrics(
     };
   }
 
-  return {
+  // Build base metrics object
+  const baseMetrics = {
     keyword,
     keyword_normalized: normalizeKeyword(keyword),
     locale,
@@ -467,6 +531,35 @@ function convertToKeywordMetrics(
     ttl_days: 30,
     schema_version: '1',
   };
+
+  // Add Google APIs data if available
+  if (googleApisData) {
+    return {
+      ...baseMetrics,
+      // Google Trends
+      trends_interest_score: googleApisData.trends?.interestScore || null,
+      trends_direction: googleApisData.trends?.direction || null,
+      trends_peak_interest: googleApisData.trends?.trendingScore || null,
+      trends_peak_month: googleApisData.trends?.peakMonth || null,
+      trends_fetched_at: new Date(),
+      trends_status: googleApisData.trends ? 'success' : 'pending',
+      // YouTube
+      youtube_video_count: googleApisData.youtube?.videoCount || null,
+      youtube_avg_views: googleApisData.youtube?.avgViews || null,
+      youtube_top_tags: googleApisData.youtube?.topTags || null,
+      youtube_content_gap: googleApisData.youtube?.contentGap || false,
+      youtube_fetched_at: new Date(),
+      youtube_status: googleApisData.youtube ? 'success' : 'pending',
+      // Google NLP
+      nlp_intent: googleApisData.nlp?.intent || null,
+      nlp_intent_confidence: googleApisData.nlp?.intentConfidence || null,
+      nlp_entities: googleApisData.nlp?.entities ? JSON.parse(JSON.stringify(googleApisData.nlp.entities)) : null,
+      nlp_fetched_at: new Date(),
+      nlp_status: googleApisData.nlp ? 'success' : 'pending',
+    };
+  }
+
+  return baseMetrics;
 }
 
 /**

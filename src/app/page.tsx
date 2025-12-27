@@ -4,6 +4,8 @@ import { useState, useRef, useEffect } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { Campaign } from '@/types/campaign';
 import WhatIfDrawer from '@/components/WhatIfDrawer';
+import NegativeKeywordsPanel from '@/components/NegativeKeywordsPanel';
+import Link from 'next/link';
 
 interface Message {
   id: string;
@@ -33,16 +35,31 @@ export default function Home() {
   const [mode, setMode] = useState<'dashboard' | 'campaigns' | 'insights' | 'settings'>('dashboard');
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [showWhatIf, setShowWhatIf] = useState(false);
+  const [showNegativeKeywords, setShowNegativeKeywords] = useState(false);
+  const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [isDemo, setIsDemo] = useState(true);
   const [dataFreshness, setDataFreshness] = useState<DataFreshness | null>(null);
   const [canSync, setCanSync] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [customerId, setCustomerId] = useState<string>('demo');
+  const [customerId, setCustomerId] = useState<string>(() => {
+    // Restore from localStorage on initial load
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('quickads_customerId') || 'demo';
+    }
+    return 'demo';
+  });
   const [accounts, setAccounts] = useState<GoogleAdsAccount[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const isAuthenticated = status === 'authenticated' && session?.user;
+
+  // Persist customerId to localStorage whenever it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined' && customerId && customerId !== 'demo') {
+      localStorage.setItem('quickads_customerId', customerId);
+    }
+  }, [customerId]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -62,9 +79,12 @@ export default function Home() {
       const data = await res.json();
       if (data.accounts && data.accounts.length > 0) {
         setAccounts(data.accounts);
-        const firstAccount = data.accounts[0];
-        setCustomerId(firstAccount.customerId);
-        fetchCampaigns(firstAccount.customerId);
+        // Use saved customerId if it exists in the accounts list, otherwise use first account
+        const savedCustomerId = localStorage.getItem('quickads_customerId');
+        const accountExists = savedCustomerId && data.accounts.some((acc: GoogleAdsAccount) => acc.customerId === savedCustomerId);
+        const targetCustomerId = accountExists ? savedCustomerId : data.accounts[0].customerId;
+        setCustomerId(targetCustomerId);
+        fetchCampaigns(targetCustomerId);
       } else {
         setAccounts([]);
         fetchCampaigns('demo');
@@ -248,6 +268,83 @@ export default function Home() {
                 </button>
               ))}
             </nav>
+
+            {/* Tools Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowToolsMenu(!showToolsMenu)}
+                onBlur={() => setTimeout(() => setShowToolsMenu(false), 150)}
+                className="flex items-center gap-2 px-4 py-2 bg-surface2 text-text2 text-sm rounded-full hover:bg-divider transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                </svg>
+                Tools
+                <svg className={`w-4 h-4 transition-transform ${showToolsMenu ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {showToolsMenu && (
+                <div className="absolute top-full left-0 mt-2 w-64 bg-surface rounded-xl shadow-lg border border-divider overflow-hidden z-50">
+                  <Link
+                    href="/spend-shield"
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-text">Spend Shield</p>
+                      <p className="text-xs text-text3">Eliminate wasted spend</p>
+                    </div>
+                  </Link>
+                  <Link
+                    href="/landing-analyzer"
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-text">Landing Page Analyzer</p>
+                      <p className="text-xs text-text3">Check speed & relevance</p>
+                    </div>
+                  </Link>
+                  <Link
+                    href="/keyword-factory"
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-text">Keyword Factory</p>
+                      <p className="text-xs text-text3">Generate keyword ideas</p>
+                    </div>
+                  </Link>
+                  <Link
+                    href="/serp-intelligence"
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-text">SERP Intelligence</p>
+                      <p className="text-xs text-text3">Track positions & PPC opportunities</p>
+                    </div>
+                  </Link>
+                </div>
+              )}
+            </div>
 
             {/* Right Actions */}
             <div className="flex items-center gap-3">
@@ -582,6 +679,84 @@ export default function Home() {
                     </button>
                   </div>
                 )}
+
+                {/* Spend Shield - Negative Keywords Tool */}
+                <div className="insight-card p-4 bg-gradient-to-br from-accent-light to-indigo-100 rounded-xl border border-accent/20">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center">
+                      <svg className="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-text">Spend Shield</p>
+                      <p className="text-xs text-text2">Eliminate wasted ad spend</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Link
+                      href="/spend-shield"
+                      className="flex-1 py-2 bg-accent text-white text-sm font-medium rounded-lg hover:bg-accent-hover transition-colors flex items-center justify-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                      </svg>
+                      Open Shield
+                    </Link>
+                    <button
+                      onClick={() => setShowNegativeKeywords(true)}
+                      className="px-3 py-2 bg-surface2 text-text2 text-sm rounded-lg hover:bg-divider transition-colors"
+                      title="Quick Preview"
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Landing Page Analyzer */}
+                <Link
+                  href="/landing-analyzer"
+                  className="insight-card p-4 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl border border-blue-200/50 block hover:shadow-md transition-shadow"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center">
+                      <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-text">Landing Page Analyzer</p>
+                      <p className="text-xs text-text2">Check speed, relevance & CTAs</p>
+                    </div>
+                    <svg className="w-4 h-4 text-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </Link>
+
+                {/* Keyword Factory */}
+                <Link
+                  href="/keyword-factory"
+                  className="insight-card p-4 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-200/50 block hover:shadow-md transition-shadow"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-400 flex items-center justify-center">
+                      <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-text">Keyword Factory</p>
+                      <p className="text-xs text-text2">Generate variations & match types</p>
+                    </div>
+                    <svg className="w-4 h-4 text-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </Link>
               </div>
 
               {/* Optimization Goals */}
@@ -693,6 +868,13 @@ export default function Home() {
           onClose={() => { setShowWhatIf(false); setSelectedCampaign(null); }}
         />
       )}
+
+      {/* Negative Keywords Panel */}
+      <NegativeKeywordsPanel
+        isOpen={showNegativeKeywords}
+        onClose={() => setShowNegativeKeywords(false)}
+        customerId={customerId}
+      />
     </div>
   );
 }

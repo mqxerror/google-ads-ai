@@ -57,6 +57,61 @@ export interface SearchTermWithSimilarity extends SearchTerm {
   similarity: number;
 }
 
+// Keyword Metrics Cache (from 004_keyword_metrics migration)
+export interface KeywordMetrics {
+  id: string;
+  keyword: string;
+  keyword_normalized: string;
+  locale: string;
+  device: 'desktop' | 'mobile' | 'tablet';
+  location_id: string; // Google Ads geoTargetConstant (e.g., '2840' for US)
+
+  // Google Ads metrics
+  gads_search_volume: number | null;
+  gads_avg_cpc_micros: number | null;
+  gads_competition: 'LOW' | 'MEDIUM' | 'HIGH' | null;
+  gads_competition_index: number | null;
+  gads_fetched_at: string | null;
+  gads_status: 'success' | 'not_found' | 'error' | 'quota_exceeded' | null;
+  gads_error: string | null;
+
+  // Moz metrics
+  moz_volume: number | null;
+  moz_difficulty: number | null;
+  moz_organic_ctr: number | null;
+  moz_priority: number | null;
+  moz_intent_primary: 'informational' | 'navigational' | 'commercial' | 'transactional' | null;
+  moz_intent_scores: Record<string, number> | null;
+  moz_fetched_at: string | null;
+  moz_status: 'success' | 'not_found' | 'error' | 'quota_exceeded' | null;
+  moz_error: string | null;
+
+  // DataForSEO metrics
+  dataforseo_search_volume: number | null;
+  dataforseo_cpc: number | null;
+  dataforseo_competition: number | null;
+  dataforseo_trends: Record<string, number> | null;
+  dataforseo_fetched_at: string | null;
+  dataforseo_status: 'success' | 'not_found' | 'error' | 'quota_exceeded' | null;
+  dataforseo_error: string | null;
+
+  // Best/derived values
+  best_search_volume: number | null;
+  best_cpc: number | null;
+  best_difficulty: number | null;
+  best_intent: 'informational' | 'navigational' | 'commercial' | 'transactional' | null;
+  best_source: 'google_ads' | 'moz' | 'dataforseo' | 'cached' | 'unavailable' | 'none' | null;
+
+  // Cache management
+  created_at: string;
+  updated_at: string;
+  cache_hit_count: number;
+  last_accessed_at: string | null;
+  ttl_days: number;
+  expires_at: string;
+  schema_version: string;
+}
+
 // Singleton Supabase client
 let supabaseClient: SupabaseClient | null = null;
 
@@ -75,7 +130,16 @@ export function getSupabaseClient(): SupabaseClient {
       throw new Error('Missing Supabase credentials. Set SUPABASE_URL and SUPABASE_SERVICE_KEY or DATABASE_URL');
     }
     // For direct PostgreSQL, we'll use a different approach
-    throw new Error('Direct PostgreSQL connection not yet supported. Please set SUPABASE_URL and SUPABASE_SERVICE_KEY');
+    // Use a placeholder key for local development with direct PostgreSQL
+    const placeholderKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvY2FsaG9zdCIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNjQxNzY5MjAwLCJleHAiOjE5NTczNDUyMDB9.dc6hdKxzzbh4P0ldGw_3O4LX6dYZjBb_Zaq8lOFyJWQ';
+
+    supabaseClient = createClient(supabaseUrl || 'http://localhost:3000', placeholderKey, {
+      auth: {
+        persistSession: false,
+      },
+    });
+
+    return supabaseClient;
   }
 
   supabaseClient = createClient(supabaseUrl, supabaseKey, {

@@ -200,12 +200,16 @@ async function lookupDatabase(
 
     const data = result.rows;
 
+    console.log(`[KeywordCache] Database returned ${data.length} rows for ${keywords.length} keywords`);
+
     const hits = new Map<string, KeywordMetrics>();
     const stale = new Map<string, KeywordMetrics>();
     const foundKeywords = new Set<string>();
 
     for (const row of data || []) {
-      foundKeywords.add(row.keyword);
+      // Use normalized keyword for matching since that's what we queried with
+      const normalizedKeyword = normalizeKeyword(row.keyword);
+      foundKeywords.add(normalizedKeyword);
 
       const isExpired = new Date(row.expires_at) < new Date();
       if (isExpired || forceRefresh) {
@@ -215,7 +219,10 @@ async function lookupDatabase(
       }
     }
 
-    const misses = keywords.filter(k => !foundKeywords.has(k));
+    // Compare normalized versions for consistency
+    const misses = keywords.filter(k => !foundKeywords.has(normalizeKeyword(k)));
+
+    console.log(`[KeywordCache] Lookup result: ${hits.size} hits, ${stale.size} stale, ${misses.length} misses`);
 
     await pool.end();
     return { hits, stale, misses };
@@ -438,39 +445,39 @@ export async function incrementCacheHit(
   device: string = 'desktop',
   locationId: string = '2840'
 ): Promise<void> {
-  const client = getSupabaseClient();
+  // Use direct PostgreSQL connection instead of Supabase client
+  const { Pool } = await import('pg');
+  const pool = new Pool({
+    host: process.env.POSTGRES_HOST || '38.97.60.181',
+    port: parseInt(process.env.POSTGRES_PORT || '5433'),
+    user: process.env.POSTGRES_USER || 'postgres',
+    password: process.env.POSTGRES_PASSWORD || 'postgres123',
+    database: process.env.POSTGRES_DB || 'google_ads_manager',
+  });
+
   const normalized = normalizeKeyword(keyword);
 
-  // First, get current hit count
-  const { data: current, error: fetchError } = await client
-    .from('keyword_metrics')
-    .select('cache_hit_count')
-    .eq('keyword_normalized', normalized)
-    .eq('locale', locale)
-    .eq('device', device)
-    .eq('location_id', locationId)
-    .single();
-
-  if (fetchError || !current) {
-    console.error('[KeywordCache] Failed to fetch for increment:', fetchError);
-    return;
-  }
-
-  // Increment cache_hit_count (triggers dynamic TTL update via trigger)
-  const { error } = await client
-    .from('keyword_metrics')
-    .update({
-      cache_hit_count: current.cache_hit_count + 1,
-      last_accessed_at: new Date().toISOString(),
-      // expires_at updated by trigger
-    })
-    .eq('keyword_normalized', normalized)
-    .eq('locale', locale)
-    .eq('device', device)
-    .eq('location_id', locationId);
-
-  if (error) {
+  try {
+    // Increment cache_hit_count and update last_accessed_at in single query
+    await pool.query(
+      `
+      UPDATE keyword_metrics
+      SET
+        cache_hit_count = cache_hit_count + 1,
+        last_accessed_at = NOW(),
+        updated_at = NOW()
+      WHERE keyword_normalized = $1
+        AND locale = $2
+        AND device = $3
+        AND location_id = $4
+      `,
+      [normalized, locale, device, locationId]
+    );
+  } catch (error) {
+    // Silently fail - non-critical operation
     console.error('[KeywordCache] Failed to increment hit count:', error);
+  } finally {
+    await pool.end();
   }
 }
 

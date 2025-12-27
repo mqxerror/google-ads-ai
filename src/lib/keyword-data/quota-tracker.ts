@@ -13,9 +13,18 @@
  * - Monthly reset tracking
  */
 
-import { getSupabaseClient } from '../supabase';
+import { Pool } from 'pg';
 import { getDataForSEOAccountInfo } from './dataforseo';
 import type { QuotaUsage, QuotaStatus } from './types';
+
+// PostgreSQL connection pool
+const pool = new Pool({
+  host: process.env.POSTGRES_HOST || '38.97.60.181',
+  port: parseInt(process.env.POSTGRES_PORT || '5433'),
+  user: process.env.POSTGRES_USER || 'postgres',
+  password: process.env.POSTGRES_PASSWORD || 'postgres123',
+  database: process.env.POSTGRES_DB || 'google_ads_manager',
+});
 
 // Quota limits
 const GOOGLE_ADS_MONTHLY_LIMIT = 10000; // requests per month
@@ -23,9 +32,11 @@ const MOZ_COST_PER_KEYWORD = 1; // credits per keyword
 const DATAFORSEO_COST_PER_KEYWORD = 0.002; // estimated $0.002 per keyword
 
 /**
- * Get current quota status for all providers
+ * Get current quota status for all providers (or specific providers)
  */
-export async function getQuotaStatus(): Promise<QuotaStatus> {
+export async function getQuotaStatus(
+  selectedProviders?: ('google_ads' | 'moz' | 'dataforseo')[]
+): Promise<QuotaStatus> {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
@@ -50,15 +61,19 @@ export async function getQuotaStatus(): Promise<QuotaStatus> {
     costPerUnit: MOZ_COST_PER_KEYWORD,
   };
 
-  // DataForSEO quota (check account balance)
+  // DataForSEO quota (check account balance) - ONLY if DataForSEO is selected
   let dataForSeoBalance = 0;
-  try {
-    const accountInfo = await getDataForSEOAccountInfo();
-    if (accountInfo.success && accountInfo.balance) {
-      dataForSeoBalance = accountInfo.balance;
+  const shouldCheckDataForSEO = !selectedProviders || selectedProviders.includes('dataforseo');
+
+  if (shouldCheckDataForSEO) {
+    try {
+      const accountInfo = await getDataForSEOAccountInfo();
+      if (accountInfo.success && accountInfo.balance) {
+        dataForSeoBalance = accountInfo.balance;
+      }
+    } catch (error) {
+      console.error('[QuotaTracker] Error fetching DataForSEO balance:', error);
     }
-  } catch (error) {
-    console.error('[QuotaTracker] Error fetching DataForSEO balance:', error);
   }
 
   const dataForSeoUsage = await getMonthlyUsage('dataforseo', monthStart, monthEnd);
@@ -92,8 +107,6 @@ async function getMonthlyUsage(
   monthStart: Date,
   monthEnd: Date
 ): Promise<number> {
-  const client = getSupabaseClient();
-
   try {
     let statusField: string;
     switch (provider) {
@@ -109,21 +122,20 @@ async function getMonthlyUsage(
     }
 
     // Count keywords that were successfully fetched from this provider this month
-    const { count, error } = await client
-      .from('keyword_metrics')
-      .select('*', { count: 'exact', head: true })
-      .eq(statusField, 'success')
-      .gte('created_at', monthStart.toISOString())
-      .lt('created_at', monthEnd.toISOString());
+    const result = await pool.query(
+      `
+      SELECT COUNT(*) as count
+      FROM keyword_metrics
+      WHERE ${statusField} = 'success'
+        AND created_at >= $1
+        AND created_at < $2
+      `,
+      [monthStart.toISOString(), monthEnd.toISOString()]
+    );
 
-    if (error) {
-      console.error(`[QuotaTracker] Error counting ${provider} usage:`, error);
-      return 0;
-    }
-
-    return count || 0;
+    return parseInt(result.rows[0]?.count || '0');
   } catch (error) {
-    console.error(`[QuotaTracker] Unexpected error counting ${provider} usage:`, error);
+    console.error(`[QuotaTracker] Error counting ${provider} usage:`, error);
     return 0;
   }
 }
@@ -170,6 +182,7 @@ export function estimateCost(
 /**
  * Check if quota is available for a request
  * Returns warnings if approaching limits
+ * PROVIDER-AWARE: Only checks quota for selected providers
  */
 export async function checkQuotaAvailability(
   keywordCount: number,
@@ -182,7 +195,8 @@ export async function checkQuotaAvailability(
   const warnings: string[] = [];
   let canProceed = true;
 
-  const quotaStatus = await getQuotaStatus();
+  // IMPORTANT: Pass selectedProviders to avoid checking unused providers
+  const quotaStatus = await getQuotaStatus(providers);
   const costEstimate = estimateCost(keywordCount, providers);
 
   // Check Google Ads quota (if used)

@@ -440,6 +440,8 @@ export async function fetchKeywordPlannerMetrics(
           keyword_seed: {
             keywords: batch,
           },
+          // IMPORTANT: Request maximum results (default is ~100-200, max is 10000)
+          page_size: 10000,
         });
 
         // Response is an array directly, not { results: [...] }
