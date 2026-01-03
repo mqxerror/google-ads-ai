@@ -33,7 +33,7 @@ This keeps the app "simple" for 80% of sessions while letting power users go dee
 - Team collaboration
 - Report generation
 - Autonomous optimization (AI recommends, humans approve)
-
+ 
 ### Target User
 **Simple customer**: A business owner or marketer who runs Google Ads and wants quick visibility + AI help without complexity.
 
@@ -1143,15 +1143,67 @@ CRAWL4AI_TOKEN=             # Bearer token for authentication
 
 ---
 
-## 11. Future Considerations (Not Committed)
+## 11. Recently Implemented Features (January 2025)
 
-Beyond keyword features, if the product evolves further:
-- Account switcher for multiple Google Ads accounts
-- Date range selector
-- Campaign creation wizard
-- Persistent user preferences
-- Email notifications
+### 11.1 Smart Campaign Creation Wizard ✅
+**Status:** Fully implemented and deployed
+
+A 5-step wizard that guides users through creating complete Google Ads campaigns with AI assistance:
+
+**Step 1: Campaign Details**
+- Campaign name, type (Search/PMax/Shopping), location, language
+- Goal selection (Leads/Sales/Traffic)
+- Real-time cost estimates based on selected keywords
+
+**Step 2: Ad Groups**
+- AI-powered keyword clustering using vector similarity (k-means)
+- Auto-generates semantically grouped ad groups
+- Users can edit group names and remove keywords
+
+**Step 3: Ad Copy**
+- Claude AI generates 8 headlines + 3 descriptions per ad group
+- Full editorial control - users can edit/add/remove any copy
+- Character limit validation (30 chars headlines, 90 chars descriptions)
+- Real-time Google-style ad preview
+
+**Step 4: Budget & Settings**
+- Daily budget slider with real-time cost projections
+- Bidding strategy selector (Maximize Conversions/Target CPA/Manual CPC)
+- Pre-built negative keyword lists (Free Seekers, DIY, Job Seekers, Informational)
+- Custom negative keywords input
+
+**Step 5: Review & Launch**
+- Complete campaign summary
+- All ad groups + keywords preview
+- Launch button creates campaign via Google Ads API
+
+**Technical Implementation:**
+- `/api/campaigns/wizard/cluster` - K-means clustering via OpenAI embeddings
+- `/api/campaigns/wizard/generate-ads` - Claude AI ad copy generation
+- `/api/campaigns/wizard/create` - Google Ads API campaign creation with proper negative keyword handling
+
+**Known Issues & Fixes:**
+- ✅ Negative keywords now properly added as campaign-level criteria with `type: 'KEYWORD'`
+- ✅ Added extensive error logging for debugging campaign creation
+- ✅ Test endpoint available at `/api/campaigns/test-negative` for validation
+
+**Accessibility:**
+- Prominent "Create Campaign" button in tools menu (highlighted)
+- Gradient card on dashboard with "NEW" badge
+- Standalone page at `/campaigns/create` explaining value proposition
+- Integration with Keyword Factory for pre-selected keywords
 
 ---
 
-*This document reflects the actual implementation as of December 2024, plus planned keyword research features.*
+## 12. Future Considerations (Not Committed)
+
+Beyond current features, if the product evolves further:
+- Account switcher for multiple Google Ads accounts (partially implemented)
+- Date range selector
+- Persistent user preferences
+- Email notifications
+- Automated A/B testing suggestions
+
+---
+
+*This document reflects the actual implementation as of January 2025, including the Smart Campaign Creation Wizard.*

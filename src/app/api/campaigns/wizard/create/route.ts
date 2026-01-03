@@ -256,22 +256,28 @@ export async function POST(request: NextRequest) {
     if (negativeKeywords && negativeKeywords.length > 0) {
       console.log(`[Create Campaign API] Adding ${negativeKeywords.length} negative keywords...`);
 
-      // Create campaign negative keyword list
       try {
+        // Google Ads API requires negative keywords to be added as campaign-level negative keywords
+        // Using the proper structure for campaign negative keywords
         const negativeKeywordOperations = negativeKeywords.map((keyword) => ({
           campaign: campaignResourceName,
+          negative: true,
           keyword: {
             text: keyword,
             match_type: 4, // BROAD
           },
-          negative: true,
+          type: 'KEYWORD',
         }));
 
-        await customer.campaignCriteria.create(negativeKeywordOperations as any);
-        console.log(`[Create Campaign API] Negative keywords added`);
+        const negativeResult = await customer.campaignCriteria.create(negativeKeywordOperations as any);
+        console.log(`[Create Campaign API] ✅ Successfully added ${negativeKeywords.length} negative keywords`);
+        console.log(`[Create Campaign API] Negative keywords:`, negativeKeywords.join(', '));
       } catch (error) {
-        console.error('[Create Campaign API] Error adding negative keywords:', error);
-        // Non-fatal, continue
+        console.error('[Create Campaign API] ❌ Error adding negative keywords:', error);
+        if (error instanceof Error) {
+          console.error('[Create Campaign API] Error details:', error.message);
+        }
+        // Non-fatal, continue - campaign is still created successfully
       }
     }
 
