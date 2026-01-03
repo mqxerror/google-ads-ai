@@ -25,14 +25,18 @@ export default function WizardStep2AdGroups({ data, onUpdate, setIsProcessing }:
 
   // Auto-generate clusters on first load if no ad groups exist
   useEffect(() => {
-    if (adGroups.length === 0 && data.preSelectedKeywords?.length > 0 && !isGenerating) {
+    const keywords = data.preSelectedKeywords || data.manualKeywords || [];
+    if (adGroups.length === 0 && keywords.length > 0 && !isGenerating) {
       handleGenerateClusters();
     }
   }, []);
 
   const handleGenerateClusters = async () => {
-    if (!data.preSelectedKeywords || data.preSelectedKeywords.length === 0) {
-      setError('No keywords selected. Please go back to Step 1.');
+    // Use manual keywords if no pre-selected keywords
+    const keywords = data.preSelectedKeywords || data.manualKeywords || [];
+
+    if (keywords.length === 0) {
+      setError('No keywords found. Please go back to Step 1 and add keywords.');
       return;
     }
 
@@ -45,7 +49,7 @@ export default function WizardStep2AdGroups({ data, onUpdate, setIsProcessing }:
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          keywords: data.preSelectedKeywords,
+          keywords,
           minClusterSize: 3,
           maxClusters: 7,
         }),
@@ -119,12 +123,13 @@ export default function WizardStep2AdGroups({ data, onUpdate, setIsProcessing }:
   };
 
   if (isGenerating) {
+    const keywords = data.preSelectedKeywords || data.manualKeywords || [];
     return (
       <div className="flex flex-col items-center justify-center py-16">
         <div className="animate-spin w-12 h-12 border-4 border-accent/30 border-t-accent rounded-full mb-4" />
         <h3 className="text-lg font-medium text-text mb-2">Generating ad groups...</h3>
         <p className="text-sm text-text3">
-          Using AI to cluster {data.preSelectedKeywords?.length || 0} keywords by semantic similarity
+          Using AI to cluster {keywords.length} keywords by semantic similarity
         </p>
       </div>
     );
@@ -164,6 +169,8 @@ export default function WizardStep2AdGroups({ data, onUpdate, setIsProcessing }:
     );
   }
 
+  const keywords = data.preSelectedKeywords || data.manualKeywords || [];
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -171,7 +178,7 @@ export default function WizardStep2AdGroups({ data, onUpdate, setIsProcessing }:
         <div>
           <h3 className="text-lg font-medium text-text">Ad Groups</h3>
           <p className="text-sm text-text3 mt-1">
-            {adGroups.length} groups created from {data.preSelectedKeywords?.length || 0} keywords
+            {adGroups.length} groups created from {keywords.length} keywords
           </p>
         </div>
         <button

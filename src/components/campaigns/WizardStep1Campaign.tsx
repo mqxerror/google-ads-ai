@@ -31,6 +31,30 @@ const LOCATIONS = [
 
 export default function WizardStep1Campaign({ data, onUpdate, preSelectedKeywords = [] }: WizardStep1Props) {
   const [estimatedDailyCost, setEstimatedDailyCost] = useState({ min: 0, max: 0 });
+  const [manualKeywords, setManualKeywords] = useState(data.manualKeywordsInput || '');
+
+  // Parse manual keywords and convert to GeneratedKeyword format
+  useEffect(() => {
+    if (manualKeywords) {
+      const keywordLines = manualKeywords
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+
+      const parsedKeywords: GeneratedKeyword[] = keywordLines.map((kw) => ({
+        keyword: kw,
+        type: 'seed' as const,
+        source: 'manual_input',
+        suggestedMatchType: 'BROAD' as const,
+        estimatedIntent: 'commercial' as const,
+      }));
+
+      onUpdate({
+        manualKeywordsInput: manualKeywords,
+        manualKeywords: parsedKeywords,
+      });
+    }
+  }, [manualKeywords]);
 
   // Calculate estimated cost based on keywords CPC
   useEffect(() => {
@@ -154,6 +178,33 @@ export default function WizardStep1Campaign({ data, onUpdate, preSelectedKeyword
           </select>
         </div>
       </div>
+
+      {/* Manual Keywords Input (if not from Keyword Factory) */}
+      {preSelectedKeywords.length === 0 && (
+        <div>
+          <label className="block text-sm font-medium text-text mb-2">
+            Keywords <span className="text-danger">*</span>
+          </label>
+          <textarea
+            value={manualKeywords}
+            onChange={(e) => setManualKeywords(e.target.value)}
+            placeholder="Enter your keywords (one per line)&#10;&#10;Example:&#10;portugal golden visa&#10;portugal residency visa&#10;portugal immigration program"
+            rows={8}
+            className="w-full px-4 py-3 bg-surface2 border border-divider rounded-lg text-text placeholder-text3 focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all resize-none font-mono text-sm"
+          />
+          <p className="mt-1.5 text-xs text-text3">
+            Enter one keyword per line. AI will cluster similar keywords into ad groups in the next step.
+          </p>
+          {manualKeywords && (
+            <div className="mt-3 flex items-center gap-2 text-sm text-text3">
+              <span className="px-2 py-0.5 bg-accent/10 text-accent rounded-full text-xs font-medium">
+                {manualKeywords.split('\n').filter((k) => k.trim()).length} keywords
+              </span>
+              <span>ready for clustering</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Estimated Cost Preview */}
       <div className="bg-accent/5 border border-accent/20 rounded-lg p-4">
