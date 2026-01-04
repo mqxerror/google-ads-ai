@@ -107,6 +107,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return extToken;
     },
     async session({ session, token }) {
+      // Set user ID from token (sub is the user's unique identifier)
+      if (session.user) {
+        session.user.id = token.sub as string;
+      }
+
       session.accessToken = token.accessToken as string;
       // Google Ads API requires refresh token, not access token
       session.refreshToken = token.refreshToken as string;

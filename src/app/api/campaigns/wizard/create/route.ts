@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createGoogleAdsClient, getCustomer } from '@/lib/google-ads';
-import { getSession } from '@/lib/auth';
+import { createGoogleAdsClient, getCustomer, createCampaign } from '@/lib/google-ads';
+import { auth } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -11,6 +11,9 @@ interface CreateCampaignRequest {
   targetLocation: string;
   language: string;
   goal: 'LEADS' | 'SALES' | 'TRAFFIC';
+  landingPageUrl: string;
+  includeSearchPartners: boolean;
+  includeDisplayNetwork: boolean;
   adGroups: Array<{
     id: string;
     name: string;
@@ -29,10 +32,10 @@ interface CreateCampaignRequest {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await auth();
 
-    if (!session?.user?.id || !session?.accessToken) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!session?.accessToken) {
+      return NextResponse.json({ error: 'Unauthorized - no access token' }, { status: 401 });
     }
 
     const customerId = request.headers.get('x-customer-id');
@@ -48,6 +51,9 @@ export async function POST(request: NextRequest) {
       targetLocation,
       language,
       goal,
+      landingPageUrl,
+      includeSearchPartners,
+      includeDisplayNetwork,
       adGroups,
       ads,
       dailyBudget,
@@ -60,82 +66,44 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    // Validate landing page URL
+    const finalUrl = landingPageUrl && landingPageUrl.startsWith('http')
+      ? landingPageUrl
+      : 'https://example.com'; // Fallback if not provided
+
     const client = createGoogleAdsClient();
     const loginCustomerId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
     const customer = getCustomer(client, customerId, session.accessToken, loginCustomerId);
 
     console.log(`[Create Campaign API] Creating campaign: ${campaignName}`);
+    console.log(`[Create Campaign API] Landing Page URL: ${finalUrl}`);
+    console.log(`[Create Campaign API] Bidding Strategy: ${biddingStrategy}`);
+    console.log(`[Create Campaign API] Search Partners: ${includeSearchPartners}, Display Network: ${includeDisplayNetwork}`);
 
-    // Step 1: Create budget
-    console.log(`[Create Campaign API] Creating budget: $${dailyBudget}/day`);
-    const budgetAmountMicros = Math.round(dailyBudget * 1_000_000);
-
-    const budgetResult = await customer.campaignBudgets.create([
+    // Use the proven working createCampaign function from google-ads.ts
+    const campaignResult = await createCampaign(
+      session.accessToken!,
+      customerId,
       {
-        name: `Budget for ${campaignName}`,
-        amount_micros: budgetAmountMicros,
-        delivery_method: 2, // STANDARD
+        name: campaignName,
+        type: campaignType,
+        status: 'ENABLED',
+        dailyBudget: dailyBudget,
+        biddingStrategy: biddingStrategy || 'MANUAL_CPC', // Use user-selected strategy
+        targetCpa: targetCpa,
+        // Network settings
+        includeSearchPartners: includeSearchPartners || false,
+        includeDisplayNetwork: includeDisplayNetwork || false,
       },
-    ] as any);
+      process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
+    );
 
-    const budgetResourceName = budgetResult.results[0]?.resource_name;
-    if (!budgetResourceName) {
-      throw new Error('Failed to create campaign budget');
+    if (!campaignResult.success || !campaignResult.campaignId) {
+      throw new Error(campaignResult.error || 'Failed to create campaign');
     }
 
-    // Step 2: Create campaign
-    console.log(`[Create Campaign API] Creating campaign...`);
-
-    const typeMapping: Record<string, number> = {
-      SEARCH: 2,
-      DISPLAY: 3,
-      SHOPPING: 4,
-      VIDEO: 6,
-      PERFORMANCE_MAX: 9,
-    };
-
-    const campaignCreatePayload: any = {
-      name: campaignName,
-      advertising_channel_type: typeMapping[campaignType] || 2,
-      status: 2, // ENABLED
-      campaign_budget: budgetResourceName,
-      network_settings: {
-        target_google_search: true,
-        target_search_network: true,
-        target_content_network: false,
-        target_partner_search_network: false,
-      },
-    };
-
-    // Configure bidding strategy
-    if (biddingStrategy === 'MAXIMIZE_CONVERSIONS') {
-      campaignCreatePayload.bidding_strategy_type = 10; // MAXIMIZE_CONVERSIONS
-      campaignCreatePayload.maximize_conversions = {};
-    } else if (biddingStrategy === 'TARGET_CPA' && targetCpa) {
-      campaignCreatePayload.bidding_strategy_type = 6; // TARGET_CPA
-      campaignCreatePayload.target_cpa = {
-        target_cpa_micros: Math.round(targetCpa * 1_000_000),
-      };
-    } else if (biddingStrategy === 'MANUAL_CPC') {
-      campaignCreatePayload.bidding_strategy_type = 1; // MANUAL_CPC
-      campaignCreatePayload.manual_cpc = {
-        enhanced_cpc_enabled: true,
-      };
-    }
-
-    // Add geo targeting
-    campaignCreatePayload.geo_target_type_setting = {
-      positive_geo_target_type: 5, // PRESENCE_OR_INTEREST
-    };
-
-    const campaignResult = await customer.campaigns.create([campaignCreatePayload] as any);
-
-    const campaignResourceName = campaignResult.results[0]?.resource_name;
-    if (!campaignResourceName) {
-      throw new Error('Failed to create campaign');
-    }
-
-    const createdCampaignId = campaignResourceName.split('/').pop();
+    const createdCampaignId = campaignResult.campaignId;
+    const campaignResourceName = `customers/${customerId}/campaigns/${createdCampaignId}`;
     console.log(`[Create Campaign API] Campaign created: ${createdCampaignId}`);
 
     // Step 3: Add geo targeting (location)
@@ -207,14 +175,24 @@ export async function POST(request: NextRequest) {
       // Add keywords to ad group
       console.log(`[Create Campaign API] Adding ${adGroup.keywords.length} keywords to ${adGroup.name}`);
 
-      const keywordOperations = adGroup.keywords.map((kw) => ({
-        ad_group: adGroupResourceName,
-        status: 2, // ENABLED
-        keyword: {
-          text: kw.keyword,
-          match_type: 4, // BROAD (can be changed to 3=PHRASE or 2=EXACT)
-        },
-      }));
+      // Map match type strings to Google Ads API enums
+      const matchTypeMapping: Record<string, number> = {
+        'EXACT': 2,   // [keyword]
+        'PHRASE': 3,  // "keyword"
+        'BROAD': 4,   // keyword
+      };
+
+      const keywordOperations = adGroup.keywords.map((kw: any) => {
+        const matchType = kw.matchType || kw.suggestedMatchType || 'BROAD';
+        return {
+          ad_group: adGroupResourceName,
+          status: 2, // ENABLED
+          keyword: {
+            text: kw.keyword,
+            match_type: matchTypeMapping[matchType] || 4, // Default to BROAD if not specified
+          },
+        };
+      });
 
       try {
         await customer.adGroupCriteria.create(keywordOperations as any);
@@ -234,7 +212,7 @@ export async function POST(request: NextRequest) {
             ad_group: adGroupResourceName,
             status: 2, // ENABLED
             ad: {
-              final_urls: ['https://example.com'], // TODO: Use actual landing page URL
+              final_urls: [finalUrl], // Use actual landing page URL from wizard
               responsive_search_ad: {
                 headlines: adCopy.headlines.slice(0, 15).map((text) => ({ text })),
                 descriptions: adCopy.descriptions.slice(0, 4).map((text) => ({ text })),

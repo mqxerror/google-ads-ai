@@ -1,220 +1,172 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
-import BulkActionBar from './components/BulkActionBar';
 import KeywordDetailModal from './components/KeywordDetailModal';
-import KeywordTable from './components/KeywordTable';
-import TrackRankingsModal from './components/TrackRankingsModal';
-import TrackSuccessModal from './components/TrackSuccessModal';
 import CampaignWizard from '@/components/campaigns/CampaignWizard';
+import { GeneratedKeyword, FactoryStats } from './types';
 
-interface GeneratedKeyword {
-  keyword: string;
-  type: 'seed' | 'variation' | 'synonym' | 'modifier' | 'long_tail';
-  source: string;
-  suggestedMatchType: 'EXACT' | 'PHRASE' | 'BROAD';
-  estimatedIntent: 'transactional' | 'informational' | 'navigational' | 'commercial';
-  negativeCandidate?: boolean;
-  negativeReason?: string;
-  // NEW: Real metrics
-  metrics?: {
-    searchVolume: number | null;
-    cpc: number | null;
-    competition: 'HIGH' | 'MEDIUM' | 'LOW' | null;
-    difficulty: number | null;
-    organicCtr: number | null;
-    dataSource: 'google_ads' | 'moz' | 'dataforseo' | 'cached' | 'unavailable';
-    lastUpdated: string;
-    cacheAge: number;
-  };
-  opportunityScore?: number;
-}
-
-interface KeywordCluster {
-  theme: string;
-  keywords: GeneratedKeyword[];
-  suggestedAdGroup: string;
-}
-
-interface Campaign {
-  id: string;
-  name: string;
-  status: 'ENABLED' | 'PAUSED' | 'REMOVED';
-  type: 'SEARCH' | 'DISPLAY' | 'SHOPPING' | 'VIDEO' | 'PERFORMANCE_MAX';
-}
-
-interface FactoryStats {
-  totalGenerated: number;
-  byType: Record<string, number>;
-  byIntent: Record<string, number>;
-  byMatchType: Record<string, number>;
-  negativesSuggested: number;
-  clusters: number;
-  // NEW: Enrichment stats
-  enrichment?: {
-    enriched: number;
-    cached: number;
-    googleFetched: number;
-    mozFetched: number;
-    dataForSeoFetched: number;
-    failed: number;
-    estimatedCost: number;
-    warnings: string[];
-  };
-}
-
-const TYPE_COLORS: Record<string, { bg: string; text: string }> = {
-  seed: { bg: 'bg-accent-light', text: 'text-accent' },
-  variation: { bg: 'bg-blue-100', text: 'text-blue-600' },
-  synonym: { bg: 'bg-purple-100', text: 'text-purple-600' },
-  modifier: { bg: 'bg-emerald-100', text: 'text-emerald-600' },
-  long_tail: { bg: 'bg-orange-100', text: 'text-orange-600' },
-};
-
-const SOURCE_BADGES: Record<string, { icon: string; label: string; color: string }> = {
-  google_autocomplete: { icon: '🔍', label: 'Google Suggests', color: 'bg-blue-500/10 text-blue-600 border-blue-500/20' },
-  google_ads_suggestion: { icon: '🎯', label: 'Google Ads', color: 'bg-green-500/10 text-green-600 border-green-500/20' },
-  user_input: { icon: '✏️', label: 'Manual', color: 'bg-gray-500/10 text-gray-600 border-gray-500/20' },
-};
-
-const INTENT_COLORS: Record<string, { bg: string; text: string; icon: string }> = {
-  transactional: { bg: 'bg-success-light', text: 'text-success', icon: '💰' },
-  commercial: { bg: 'bg-warning-light', text: 'text-warning', icon: '🔍' },
-  informational: { bg: 'bg-blue-100', text: 'text-blue-600', icon: '📚' },
-  navigational: { bg: 'bg-gray-100', text: 'text-gray-600', icon: '🧭' },
-};
-
-const MATCH_TYPE_ICONS: Record<string, string> = {
-  EXACT: '[exact]',
-  PHRASE: '"phrase"',
-  BROAD: '+broad',
-};
-
-// Common target locations (Google Ads geoTargetConstants)
+// Compact target locations
 const TARGET_LOCATIONS = [
-  { code: 'US', name: '🇺🇸 United States', geoCode: '2840' },
-  { code: 'GB', name: '🇬🇧 United Kingdom', geoCode: '2826' },
-  { code: 'CA', name: '🇨🇦 Canada', geoCode: '2124' },
-  { code: 'AU', name: '🇦🇺 Australia', geoCode: '2036' },
-  { code: 'DE', name: '🇩🇪 Germany', geoCode: '2276' },
-  { code: 'FR', name: '🇫🇷 France', geoCode: '2250' },
-  { code: 'ES', name: '🇪🇸 Spain', geoCode: '2724' },
-  { code: 'IT', name: '🇮🇹 Italy', geoCode: '2380' },
-  { code: 'PT', name: '🇵🇹 Portugal', geoCode: '2620' },
-  { code: 'BR', name: '🇧🇷 Brazil', geoCode: '2076' },
-  { code: 'IN', name: '🇮🇳 India', geoCode: '2356' },
-  { code: 'SG', name: '🇸🇬 Singapore', geoCode: '2702' },
-  { code: 'AE', name: '🇦🇪 UAE', geoCode: '2784' },
+  { code: 'US', flag: '🇺🇸', name: 'United States' },
+  { code: 'GB', flag: '🇬🇧', name: 'United Kingdom' },
+  { code: 'CA', flag: '🇨🇦', name: 'Canada' },
+  { code: 'AU', flag: '🇦🇺', name: 'Australia' },
+  { code: 'DE', flag: '🇩🇪', name: 'Germany' },
+  { code: 'FR', flag: '🇫🇷', name: 'France' },
+  { code: 'ES', flag: '🇪🇸', name: 'Spain' },
+  { code: 'PT', flag: '🇵🇹', name: 'Portugal' },
 ];
+
+const INTENT_COLORS: Record<string, { bg: string; text: string; icon: string; label: string }> = {
+  transactional: { bg: 'bg-green-100', text: 'text-green-700', icon: '🛒', label: 'Transactional' },
+  commercial: { bg: 'bg-yellow-100', text: 'text-yellow-700', icon: '🔎', label: 'Commercial' },
+  informational: { bg: 'bg-blue-100', text: 'text-blue-700', icon: '💡', label: 'Informational' },
+  navigational: { bg: 'bg-gray-100', text: 'text-gray-600', icon: '🧭', label: 'Navigational' },
+};
+
+const MATCH_TYPE_LABELS: Record<string, { label: string; color: string; desc: string }> = {
+  EXACT: { label: 'Exact', color: 'bg-purple-100 text-purple-700', desc: 'Precise targeting' },
+  PHRASE: { label: 'Phrase', color: 'bg-blue-100 text-blue-700', desc: 'Flexible match' },
+  BROAD: { label: 'Broad', color: 'bg-gray-100 text-gray-600', desc: 'Wide reach' },
+};
+
+const COMPETITION_COLORS: Record<string, string> = {
+  HIGH: 'text-red-600 bg-red-50',
+  MEDIUM: 'text-yellow-600 bg-yellow-50',
+  LOW: 'text-green-600 bg-green-50',
+};
+
+// Search history item type
+interface SearchHistoryItem {
+  id: string;
+  seedKeywords: string[];
+  targetLocation: string;
+  keywordCount: number;
+  timestamp: Date;
+  keywords: GeneratedKeyword[];
+}
 
 export default function KeywordFactoryPage() {
   const { data: session, status } = useSession();
   const [seedInput, setSeedInput] = useState('');
+  const [targetLocation, setTargetLocation] = useState('US');
   const [generating, setGenerating] = useState(false);
   const [keywords, setKeywords] = useState<GeneratedKeyword[]>([]);
-  const [negativeKeywords, setNegativeKeywords] = useState<GeneratedKeyword[]>([]);
-  const [clusters, setClusters] = useState<KeywordCluster[]>([]);
   const [stats, setStats] = useState<FactoryStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Filters
-  const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [intentFilter, setIntentFilter] = useState<string>('all');
-  const [matchFilter, setMatchFilter] = useState<string>('all');
-  const [viewMode, setViewMode] = useState<'list' | 'clusters'>('list');
-
-  // Selection for export
+  // Selection
   const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
 
-  // Options
-  const [options, setOptions] = useState({
-    generateVariations: true,
-    generateSynonyms: true,
-    suggestMatchTypes: true,
-    includeNegatives: true,
-    // NEW: Enrichment options
-    enrichWithMetrics: false,
-    metricsProviders: ['google_ads'] as ('google_ads' | 'moz' | 'dataforseo')[],
-    maxKeywordsToEnrich: 50,
-    minSearchVolume: 0,
-    sortByMetrics: true,
-    // NEW: Location targeting (GPT recommended)
-    targetLocation: 'US', // Default to US, will use account location if available
-  });
+  // Expanded row for details
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
-  // NEW: Enrichment UI states
-  const [expandedSection, setExpandedSection] = useState<'enrichment' | null>(null);
-  const [showOnboardingModal, setShowOnboardingModal] = useState(false);
-  const [dontShowAgain, setDontShowAgain] = useState(false);
+  // Enrichment states
+  const [enrichingVolume, setEnrichingVolume] = useState(false);
+  const [enrichingIntent, setEnrichingIntent] = useState(false);
+  const [enrichedKeywords, setEnrichedKeywords] = useState<Set<string>>(new Set());
 
-  // SERP Intelligence tracking modals
-  const [showTrackModal, setShowTrackModal] = useState(false);
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [trackingKeywordCount, setTrackingKeywordCount] = useState(0);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  // Filters - Default sort by volume DESC (highest first)
+  const [sortBy, setSortBy] = useState<'keyword' | 'volume' | 'cpc' | 'competition' | 'trend'>('volume');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [intentFilter, setIntentFilter] = useState<string>('all');
+  const [pageSize, setPageSize] = useState<number>(50);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // Search History
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState(true);
+
+  // Import modal
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importText, setImportText] = useState('');
+
+  // Modal
   const [selectedKeywordForDetail, setSelectedKeywordForDetail] = useState<GeneratedKeyword | null>(null);
-
-  // Campaigns for bulk actions
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
-
-  // Campaign wizard
   const [showCampaignWizard, setShowCampaignWizard] = useState(false);
+
+  // Save to List
+  const [showSaveToListModal, setShowSaveToListModal] = useState(false);
+  const [lists, setLists] = useState<Array<{ id: string; name: string; icon: string; color: string; keyword_count: number }>>([]);
+  const [listsLoading, setListsLoading] = useState(false);
+  const [savingToList, setSavingToList] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [creatingNewList, setCreatingNewList] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState<{ added: number; duplicates: number; listName: string } | null>(null);
+  const [enrichSuccess, setEnrichSuccess] = useState<{ type: string; count: number; cached?: number; cost?: string } | null>(null);
 
   const isAuthenticated = status === 'authenticated' && session?.user;
 
-  // Check if user has seen enrichment onboarding
+  // Load search history from localStorage
   useEffect(() => {
-    const hasSeenOnboarding = localStorage.getItem('keyword-factory-enrichment-onboarding');
-    if (!hasSeenOnboarding && isAuthenticated) {
-      // Show immediately on first visit (no delay)
-      setShowOnboardingModal(true);
-    }
-  }, [isAuthenticated]);
-
-  // Keyboard shortcut: Cmd/Ctrl + E = Toggle enrichment section
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      // Cmd/Ctrl + E = Toggle enrichment expansion
-      if ((e.metaKey || e.ctrlKey) && e.key === 'e') {
-        e.preventDefault();
-        setExpandedSection(expandedSection === 'enrichment' ? null : 'enrichment');
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('keyword-factory-history');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setSearchHistory(parsed.map((h: any) => ({
+            ...h,
+            timestamp: new Date(h.timestamp),
+          })));
+        } catch (e) {
+          console.error('Failed to parse search history');
+        }
       }
+    }
+  }, []);
+
+  // Save search history to localStorage
+  function saveToHistory(seeds: string[], location: string, keywords: GeneratedKeyword[]) {
+    const newItem: SearchHistoryItem = {
+      id: Date.now().toString(),
+      seedKeywords: seeds,
+      targetLocation: location,
+      keywordCount: keywords.length,
+      timestamp: new Date(),
+      keywords,
     };
 
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [expandedSection]);
+    setSearchHistory(prev => {
+      const updated = [newItem, ...prev].slice(0, 20); // Keep last 20
+      localStorage.setItem('keyword-factory-history', JSON.stringify(updated));
+      return updated;
+    });
+  }
 
-  // Fetch campaigns for bulk actions
-  useEffect(() => {
-    async function fetchCampaigns() {
-      if (!session?.customerId) return;
+  // Load keywords from history
+  function loadFromHistory(item: SearchHistoryItem) {
+    setKeywords(item.keywords);
+    setSeedInput(item.seedKeywords.join(', '));
+    setTargetLocation(item.targetLocation);
+    setSelectedKeywords(new Set());
+    setExpandedRow(null);
+    setEnrichedKeywords(new Set());
+  }
 
-      setLoadingCampaigns(true);
-      try {
-        const response = await fetch(`/api/google-ads/campaigns?customerId=${session.customerId}`);
-        const data = await response.json();
+  // Delete history item
+  function deleteHistoryItem(id: string) {
+    setSearchHistory(prev => {
+      const updated = prev.filter(h => h.id !== id);
+      localStorage.setItem('keyword-factory-history', JSON.stringify(updated));
+      return updated;
+    });
+  }
 
-        if (data.campaigns) {
-          setCampaigns(data.campaigns);
-        }
-      } catch (error) {
-        console.error('Failed to fetch campaigns:', error);
-      } finally {
-        setLoadingCampaigns(false);
-      }
-    }
+  // Clear all history
+  function clearHistory() {
+    setSearchHistory([]);
+    localStorage.removeItem('keyword-factory-history');
+  }
 
-    if (isAuthenticated) {
-      fetchCampaigns();
-    }
-  }, [isAuthenticated, session?.customerId]);
+  // Enrichment loading state
+  const [enrichmentProgress, setEnrichmentProgress] = useState<string | null>(null);
 
-  async function handleGenerate() {
-    const seeds = seedInput
+  // Generate keywords then auto-fetch Google Ads metrics
+  async function handleGenerate(inputKeywords?: string[]) {
+    const seeds = inputKeywords || seedInput
       .split(/[,\n]/)
       .map(s => s.trim())
       .filter(s => s.length > 0);
@@ -223,104 +175,358 @@ export default function KeywordFactoryPage() {
 
     setGenerating(true);
     setError(null);
-    setWarnings([]);
+    setExpandedRow(null);
+    setEnrichedKeywords(new Set());
+    setEnrichmentProgress(null);
 
     try {
+      // Step 1: Generate keywords (fast - autocomplete only)
       const res = await fetch('/api/keywords/factory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seedKeywords: seeds, options }),
+        body: JSON.stringify({
+          seedKeywords: seeds,
+          options: {
+            generateVariations: true,
+            generateSynonyms: true,
+            includeNegatives: true,
+            enrichWithMetrics: false,
+            targetLocation,
+          },
+        }),
       });
 
       const data = await res.json();
 
       if (data.error && !data.keywords?.length) {
         setError(data.error);
-      } else {
-        setKeywords(data.keywords || []);
-        setNegativeKeywords(data.negativeKeywords || []);
-        setClusters(data.clusters || []);
-        setStats(data.stats);
-        setWarnings(data.warnings || []);
-        setSelectedKeywords(new Set());
+        setGenerating(false);
+        return;
       }
+
+      // Show keywords immediately - they now come WITH metrics from Google Ads Keyword Planner
+      const generatedKeywords = data.keywords || [];
+      setKeywords(generatedKeywords);
+      setStats(data.stats);
+      setSelectedKeywords(new Set());
+      setGenerating(false);
+
+      // Count how many keywords already have metrics
+      const withMetrics = generatedKeywords.filter((k: GeneratedKeyword) => k.metrics?.searchVolume != null).length;
+      console.log(`[Keyword Factory] Received ${generatedKeywords.length} keywords, ${withMetrics} with metrics`);
+
+      // Mark keywords with metrics as enriched
+      if (withMetrics > 0) {
+        setEnrichedKeywords(new Set(
+          generatedKeywords
+            .filter((k: GeneratedKeyword) => k.metrics?.searchVolume != null)
+            .map((k: GeneratedKeyword) => k.keyword)
+        ));
+      }
+
+      // Save to history
+      saveToHistory(seeds, targetLocation, generatedKeywords);
+
     } catch (err) {
-      setError('Failed to generate keywords. Please try again.');
-    } finally {
+      setError('Failed to generate keywords');
       setGenerating(false);
     }
   }
 
-  function handleEnableEnrichment() {
-    setOptions({ ...options, enrichWithMetrics: true });
-    setShowOnboardingModal(false);
-    // Only persist if user checked "don't show again"
-    if (dontShowAgain) {
-      localStorage.setItem('keyword-factory-enrichment-onboarding', 'true');
+  // Import from CSV file
+  function handleFileImport(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      if (text) {
+        // Parse CSV - extract first column (keywords)
+        const lines = text.split('\n');
+        const keywords: string[] = [];
+
+        lines.forEach((line, i) => {
+          // Skip header row if it looks like a header
+          if (i === 0 && (line.toLowerCase().includes('keyword') || line.toLowerCase().includes('term'))) {
+            return;
+          }
+          const cols = line.split(',');
+          const kw = cols[0]?.trim().replace(/^["']|["']$/g, '');
+          if (kw && kw.length > 0) {
+            keywords.push(kw);
+          }
+        });
+
+        if (keywords.length > 0) {
+          setSeedInput(keywords.slice(0, 50).join('\n')); // Limit to 50
+          handleGenerate(keywords.slice(0, 50));
+        }
+      }
+    };
+    reader.readAsText(file);
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   }
 
-  function dismissOnboarding() {
-    setShowOnboardingModal(false);
-    // Only persist if user checked "don't show again"
-    if (dontShowAgain) {
-      localStorage.setItem('keyword-factory-enrichment-onboarding', 'true');
+  // Paste from clipboard
+  async function handlePasteFromClipboard() {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        // Parse pasted text - one keyword per line or comma separated
+        const keywords = text
+          .split(/[,\n]/)
+          .map(s => s.trim().replace(/^["']|["']$/g, ''))
+          .filter(s => s.length > 0 && s.length < 100)
+          .slice(0, 50);
+
+        if (keywords.length > 0) {
+          setSeedInput(keywords.join('\n'));
+          setShowImportModal(false);
+        }
+      }
+    } catch (err) {
+      setError('Failed to read clipboard. Please paste manually.');
     }
   }
 
+  // Import from text modal
+  function handleImportFromText() {
+    if (!importText.trim()) return;
+
+    const keywords = importText
+      .split(/[,\n]/)
+      .map(s => s.trim().replace(/^["']|["']$/g, ''))
+      .filter(s => s.length > 0 && s.length < 100)
+      .slice(0, 50);
+
+    if (keywords.length > 0) {
+      setSeedInput(keywords.join('\n'));
+      setShowImportModal(false);
+      setImportText('');
+    }
+  }
+
+  // ON-DEMAND: Enrich selected keywords with Volume/CPC
+  async function handleEnrichVolume() {
+    const toEnrich = selectedKeywords.size > 0
+      ? keywords.filter(k => selectedKeywords.has(k.keyword))
+      : keywords.slice(0, 50);
+
+    if (toEnrich.length === 0) return;
+
+    setEnrichingVolume(true);
+
+    try {
+      const res = await fetch('/api/keywords/enrich', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keywords: toEnrich.map(k => k.keyword),
+          targetLocation,
+          providers: ['google_ads'],
+        }),
+      });
+
+      const data = await res.json();
+
+      // Show error message if present
+      if (data.error) {
+        setError(data.error);
+      }
+
+      if (data.enriched && Object.keys(data.enriched).length > 0) {
+        setKeywords(prev => prev.map(kw => {
+          const enriched = data.enriched[kw.keyword];
+          if (enriched) {
+            const newKw: GeneratedKeyword = {
+              ...kw,
+              metrics: {
+                searchVolume: enriched.searchVolume ?? null,
+                cpc: enriched.cpc ?? null,
+                competition: enriched.competition ?? null,
+                difficulty: kw.metrics?.difficulty ?? null,
+                organicCtr: kw.metrics?.organicCtr ?? null,
+                dataSource: 'google_ads',
+                lastUpdated: new Date().toISOString(),
+                cacheAge: 0,
+                lowBidMicros: enriched.lowBidMicros,
+                highBidMicros: enriched.highBidMicros,
+                monthlySearchVolumes: enriched.monthlySearchVolumes,
+                threeMonthChange: enriched.threeMonthChange,
+                yearOverYearChange: enriched.yearOverYearChange,
+              },
+            };
+            return newKw;
+          }
+          return kw;
+        }));
+
+        setEnrichedKeywords(prev => {
+          const next = new Set(prev);
+          toEnrich.forEach(k => next.add(k.keyword));
+          return next;
+        });
+      }
+    } catch (err) {
+      setError('Failed to enrich keywords');
+    } finally {
+      setEnrichingVolume(false);
+    }
+  }
+
+  // ON-DEMAND: Classify intent using DataForSEO
+  async function handleClassifyIntent() {
+    const toClassify = selectedKeywords.size > 0
+      ? keywords.filter(k => selectedKeywords.has(k.keyword))
+      : keywords.slice(0, 1000); // Limit to 1000 for DataForSEO
+
+    if (toClassify.length === 0) return;
+
+    setEnrichingIntent(true);
+
+    try {
+      const res = await fetch('/api/keywords/classify-intent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keywords: toClassify.map(k => k.keyword),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.error) {
+        setError(data.error + (data.details ? `: ${data.details}` : ''));
+        return;
+      }
+
+      if (data.results) {
+        setKeywords(prev => prev.map(kw => {
+          const result = data.results[kw.keyword];
+          if (result && result.intent) {
+            const newKw: GeneratedKeyword = {
+              ...kw,
+              estimatedIntent: result.intent,
+              metrics: kw.metrics ? {
+                ...kw.metrics,
+                intentSource: 'dataforseo',
+                intentConfidence: result.confidence,
+              } : {
+                searchVolume: null,
+                cpc: null,
+                competition: null,
+                difficulty: null,
+                organicCtr: null,
+                dataSource: 'unavailable' as const,
+                lastUpdated: new Date().toISOString(),
+                cacheAge: 0,
+                intentSource: 'dataforseo' as const,
+                intentConfidence: result.confidence,
+              },
+            };
+            return newKw;
+          }
+          return kw;
+        }));
+
+        // Show success notification
+        if (data.stats) {
+          setEnrichSuccess({
+            type: 'Intent',
+            count: data.stats.withIntent || 0,
+            cached: data.stats.cached || 0,
+            cost: data.stats.estimatedCost,
+          });
+          setTimeout(() => setEnrichSuccess(null), 5000);
+        }
+      }
+    } catch (err) {
+      console.error('[Intent] Error:', err);
+      setError('Failed to classify intent');
+    } finally {
+      setEnrichingIntent(false);
+    }
+  }
+
+  // Toggle keyword selection
   function toggleKeyword(keyword: string) {
-    const newSelected = new Set(selectedKeywords);
-    if (newSelected.has(keyword)) {
-      newSelected.delete(keyword);
-    } else {
-      newSelected.add(keyword);
-    }
-    setSelectedKeywords(newSelected);
+    setSelectedKeywords(prev => {
+      const next = new Set(prev);
+      if (next.has(keyword)) {
+        next.delete(keyword);
+      } else {
+        next.add(keyword);
+      }
+      return next;
+    });
   }
 
+  // Toggle row expansion
+  function toggleRowExpand(keyword: string) {
+    setExpandedRow(prev => prev === keyword ? null : keyword);
+  }
+
+  // Select all visible keywords
   function selectAll() {
-    setSelectedKeywords(new Set(filteredKeywords.map(k => k.keyword)));
+    setSelectedKeywords(new Set(sortedKeywords.map(k => k.keyword)));
   }
 
+  // Clear selection
   function clearSelection() {
     setSelectedKeywords(new Set());
   }
 
-  function copyToClipboard() {
-    const text = Array.from(selectedKeywords).join('\n');
-    navigator.clipboard.writeText(text);
-  }
+  // Sort and filter keywords
+  const filteredKeywords = [...keywords]
+    .filter(k => intentFilter === 'all' || k.estimatedIntent === intentFilter)
+    .sort((a, b) => {
+      let comparison = 0;
+      switch (sortBy) {
+        case 'volume':
+          comparison = (a.metrics?.searchVolume || 0) - (b.metrics?.searchVolume || 0);
+          break;
+        case 'cpc':
+          comparison = (a.metrics?.cpc || 0) - (b.metrics?.cpc || 0);
+          break;
+        case 'competition':
+          const compOrder: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3 };
+          comparison = (compOrder[a.metrics?.competition || 'LOW'] || 0) - (compOrder[b.metrics?.competition || 'LOW'] || 0);
+          break;
+        case 'trend':
+          comparison = (a.metrics?.threeMonthChange || 0) - (b.metrics?.threeMonthChange || 0);
+          break;
+        default:
+          comparison = a.keyword.localeCompare(b.keyword);
+      }
+      return sortDir === 'desc' ? -comparison : comparison;
+    });
 
+  // Pagination
+  const totalPages = Math.ceil(filteredKeywords.length / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const sortedKeywords = filteredKeywords.slice(startIndex, startIndex + pageSize);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [intentFilter, pageSize, keywords.length]);
+
+  // Export CSV
   function exportCSV() {
-    const selected = keywords.filter(k => selectedKeywords.has(k.keyword));
-
-    // Enhanced CSV with metrics
-    const headers = ['Keyword', 'Type', 'Match Type', 'Intent'];
-    if (options.enrichWithMetrics) {
-      headers.push('Volume', 'CPC', 'Competition', 'Opportunity Score');
-    }
+    const selected = selectedKeywords.size > 0
+      ? keywords.filter(k => selectedKeywords.has(k.keyword))
+      : keywords;
 
     const csv = [
-      headers.join(','),
-      ...selected.map(k => {
-        const row = [
-          `"${k.keyword}"`,
-          k.type,
-          k.suggestedMatchType,
-          k.estimatedIntent,
-        ];
-
-        if (options.enrichWithMetrics) {
-          row.push(
-            k.metrics?.searchVolume?.toString() || '0',
-            k.metrics?.cpc?.toFixed(2) || '0.00',
-            k.metrics?.competition || 'UNKNOWN',
-            k.opportunityScore?.toString() || '0'
-          );
-        }
-
-        return row.join(',');
-      }),
+      'Keyword,Volume,CPC,Competition,Intent,Match Type',
+      ...selected.map(k =>
+        `"${k.keyword}",${k.metrics?.searchVolume || ''},${k.metrics?.cpc?.toFixed(2) || ''},${k.metrics?.competition || ''},${k.estimatedIntent},${k.suggestedMatchType}`
+      ),
     ].join('\n');
 
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -331,112 +537,139 @@ export default function KeywordFactoryPage() {
     a.click();
   }
 
-  async function handleAddToCampaign(campaignId: string) {
-    const selected = keywords.filter(k => selectedKeywords.has(k.keyword));
+  // Copy to clipboard
+  function copyToClipboard() {
+    const selected = selectedKeywords.size > 0
+      ? Array.from(selectedKeywords)
+      : keywords.map(k => k.keyword);
+    navigator.clipboard.writeText(selected.join('\n'));
+  }
+
+  // Fetch lists for Save to List modal
+  async function fetchLists() {
+    try {
+      setListsLoading(true);
+      const res = await fetch('/api/lists');
+      if (res.ok) {
+        const data = await res.json();
+        setLists(data.lists || []);
+      }
+    } catch (err) {
+      console.error('Error fetching lists:', err);
+    } finally {
+      setListsLoading(false);
+    }
+  }
+
+  // Open Save to List modal
+  function openSaveToListModal() {
+    setShowSaveToListModal(true);
+    fetchLists();
+  }
+
+  // Save selected keywords to a list
+  async function saveToList(listId: string, listName?: string) {
+    const keywordsToSave = selectedKeywords.size > 0
+      ? keywords.filter(k => selectedKeywords.has(k.keyword))
+      : keywords;
+
+    if (keywordsToSave.length === 0) return;
 
     try {
-      // TODO: Implement actual API call to add keywords to campaign
-      const response = await fetch('/api/google-ads/add-keywords', {
+      setSavingToList(true);
+      const res = await fetch(`/api/lists/${listId}/keywords`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          campaignId,
-          keywords: selected.map(k => ({
+          keywords: keywordsToSave.map(k => ({
             keyword: k.keyword,
-            matchType: k.suggestedMatchType,
+            searchVolume: k.metrics?.searchVolume,
+            cpc: k.metrics?.cpc,
           })),
         }),
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to add keywords to campaign');
-      }
+      if (!res.ok) throw new Error('Failed to save');
 
-      alert(`Successfully added ${selected.length} keywords to campaign`);
-      setSelectedKeywords(new Set());
-    } catch (error) {
-      console.error('Error adding keywords:', error);
-      alert('Failed to add keywords to campaign. Feature coming soon!');
+      const data = await res.json();
+      setShowSaveToListModal(false);
+      // Show success toast
+      setSaveSuccess({
+        added: data.added,
+        duplicates: data.duplicates,
+        listName: listName || 'list'
+      });
+      // Auto-hide after 4 seconds
+      setTimeout(() => setSaveSuccess(null), 4000);
+    } catch (err) {
+      console.error('Error saving to list:', err);
+      setError('Failed to save keywords to list');
+    } finally {
+      setSavingToList(false);
     }
   }
 
-  async function handleCreateCampaign() {
-    const selected = keywords.filter(k => selectedKeywords.has(k.keyword));
+  // Create new list and save keywords
+  async function createListAndSave() {
+    if (!newListName.trim()) return;
 
-    if (selected.length === 0) {
-      alert('Please select at least one keyword to create a campaign');
-      return;
+    const listNameToCreate = newListName.trim();
+
+    try {
+      setCreatingNewList(true);
+
+      // Create list
+      const createRes = await fetch('/api/lists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: listNameToCreate }),
+      });
+
+      if (!createRes.ok) throw new Error('Failed to create list');
+
+      const { list } = await createRes.json();
+
+      // Save keywords to the new list
+      await saveToList(list.id, listNameToCreate);
+      setNewListName('');
+    } catch (err) {
+      console.error('Error creating list:', err);
+      setError('Failed to create list');
+    } finally {
+      setCreatingNewList(false);
     }
-
-    // Open campaign wizard with selected keywords
-    setShowCampaignWizard(true);
   }
 
-  async function handleTrackInSERP() {
-    const selected = keywords.filter(k => selectedKeywords.has(k.keyword));
-
-    if (selected.length === 0) {
-      return;
+  // Handle sort click
+  function handleSort(column: typeof sortBy) {
+    if (sortBy === column) {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortDir('desc');
     }
-
-    // Max 100 keywords per request
-    if (selected.length > 100) {
-      setError('Maximum 100 keywords can be tracked at once. Please select fewer keywords.');
-      return;
-    }
-
-    // Get customerId from localStorage
-    const savedCustomerId = localStorage.getItem('quickads_customerId');
-    if (!savedCustomerId || savedCustomerId === 'demo') {
-      setError('Please connect a Google Ads account first.');
-      return;
-    }
-
-    // Show modal
-    setTrackingKeywordCount(selected.length);
-    setShowTrackModal(true);
   }
 
-  async function confirmTrackInSERP(targetDomain: string) {
-    const selected = keywords.filter(k => selectedKeywords.has(k.keyword));
-    const savedCustomerId = localStorage.getItem('quickads_customerId');
-
-    const response = await fetch('/api/serp-intelligence/keywords', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        customerId: savedCustomerId,
-        keywords: selected.map(k => k.keyword),
-        targetDomain,
-        locationCode: options.targetLocation,
-        device: 'desktop',
-        language: 'en',
-        projectName: 'Keyword Factory',
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.message || data.error || 'Failed to track keywords');
-    }
-
-    // Clear selection and show success modal
-    setSelectedKeywords(new Set());
-    setShowSuccessModal(true);
+  // Format micros to dollars
+  function formatBid(micros: number | null | undefined): string {
+    if (!micros) return '—';
+    return `$${(micros / 1000000).toFixed(2)}`;
   }
 
-  function handleViewDashboard() {
-    window.location.href = '/serp-intelligence';
-  }
+  // Format date
+  function formatDate(date: Date): string {
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
 
-  // Filter keywords
-  const filteredKeywords = keywords.filter(k => {
-    if (typeFilter !== 'all' && k.type !== typeFilter) return false;
-    if (intentFilter !== 'all' && k.estimatedIntent !== intentFilter) return false;
-    if (matchFilter !== 'all' && k.suggestedMatchType !== matchFilter) return false;
-    return true;
-  });
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    if (days < 7) return `${days}d ago`;
+    return date.toLocaleDateString();
+  }
 
   if (!isAuthenticated) {
     return (
@@ -447,8 +680,8 @@ export default function KeywordFactoryPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
             </svg>
           </div>
-          <h1 className="text-2xl font-bold text-text mb-2">Google Ads Keyword Generator</h1>
-          <p className="text-text2 mb-6">Sign in to generate Google Ads keywords with real search volume and CPC data</p>
+          <h1 className="text-2xl font-bold text-text mb-2">Keyword Factory</h1>
+          <p className="text-text2 mb-6">Sign in to research keywords with real metrics</p>
           <Link href="/login" className="btn-primary">Sign In with Google</Link>
         </div>
       </div>
@@ -456,756 +689,702 @@ export default function KeywordFactoryPage() {
   }
 
   return (
-    <div className="min-h-screen bg-bg">
-      {/* Header */}
-      <header className="bg-surface border-b border-divider sticky top-0 z-40">
-        <div className="max-w-[1400px] mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Link href="/" className="text-text2 hover:text-text transition-colors">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                </svg>
-              </Link>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-400 flex items-center justify-center">
-                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                  </svg>
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-xl font-semibold text-text">Google Ads Keyword Generator</h1>
-                    {/* Show active location when enrichment enabled */}
-                    {options.enrichWithMetrics && (
-                      <span className="px-3 py-1 text-sm font-normal bg-surface2 rounded-full flex items-center gap-1">
-                        <span>
-                          {TARGET_LOCATIONS.find(l => l.code === options.targetLocation)?.name.split(' ')[0]}
-                        </span>
-                        <span className="text-text3">
-                          {TARGET_LOCATIONS.find(l => l.code === options.targetLocation)?.name.split(' ').slice(1).join(' ')}
-                        </span>
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-text3">Generate keyword variations, synonyms, match types, and negative keywords for PPC campaigns</p>
-                </div>
-              </div>
-            </div>
+    <div className="min-h-screen bg-bg flex flex-col">
+      {/* Hidden file input */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileImport}
+        accept=".csv,.txt"
+        className="hidden"
+      />
 
-            {/* Export Actions */}
-            {selectedKeywords.size > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-text2">{selectedKeywords.size} selected</span>
-                <button
-                  onClick={copyToClipboard}
-                  className="px-3 py-1.5 text-sm bg-surface2 rounded-lg hover:bg-surface3 transition-colors flex items-center gap-1"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                  Copy
-                </button>
-                <button
-                  onClick={exportCSV}
-                  className="px-3 py-1.5 text-sm bg-accent text-white rounded-lg hover:bg-accent/90 transition-colors flex items-center gap-1"
-                >
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                  Export CSV
-                </button>
+      {/* Compact Header Bar */}
+      <header className="bg-surface border-b border-divider sticky top-0 z-40">
+        <div className="max-w-[1800px] mx-auto px-4 py-3">
+          <div className="flex items-center gap-3">
+            {/* Logo */}
+            <Link href="/" className="flex items-center gap-2 flex-shrink-0">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-400 flex items-center justify-center">
+                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
               </div>
-            )}
+            </Link>
+
+            {/* Search Input */}
+            <div className="flex-1 flex items-center gap-2">
+              <div className="relative flex-1 max-w-xl">
+                <input
+                  type="text"
+                  value={seedInput}
+                  onChange={(e) => setSeedInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleGenerate()}
+                  placeholder="Enter keywords (comma separated)..."
+                  className="w-full pl-4 pr-10 py-2 bg-surface2 rounded-lg text-text placeholder:text-text3 focus:outline-none focus:ring-2 focus:ring-accent text-sm"
+                />
+                {seedInput && (
+                  <button
+                    onClick={() => setSeedInput('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-text3 hover:text-text"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+
+              {/* Location */}
+              <select
+                value={targetLocation}
+                onChange={(e) => setTargetLocation(e.target.value)}
+                className="px-2 py-2 bg-surface2 rounded-lg text-sm text-text focus:outline-none"
+              >
+                {TARGET_LOCATIONS.map(loc => (
+                  <option key={loc.code} value={loc.code}>{loc.flag} {loc.code}</option>
+                ))}
+              </select>
+
+              {/* Generate */}
+              <button
+                onClick={() => handleGenerate()}
+                disabled={generating || !seedInput.trim()}
+                className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-400 text-white font-medium rounded-lg hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+              >
+                {generating ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                )}
+                <span className="hidden sm:inline">{generating ? 'Searching...' : 'Search'}</span>
+              </button>
+
+              <div className="h-6 w-px bg-divider" />
+
+              {/* Import Options */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-2 text-sm bg-surface2 rounded-lg hover:bg-surface3 flex items-center gap-1.5"
+                title="Import from CSV"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <span className="hidden md:inline">CSV</span>
+              </button>
+
+              <button
+                onClick={handlePasteFromClipboard}
+                className="px-3 py-2 text-sm bg-surface2 rounded-lg hover:bg-surface3 flex items-center gap-1.5"
+                title="Paste from clipboard"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                <span className="hidden md:inline">Paste</span>
+              </button>
+
+              <button
+                onClick={() => setShowImportModal(true)}
+                className="px-3 py-2 text-sm bg-surface2 rounded-lg hover:bg-surface3 flex items-center gap-1.5"
+                title="Bulk import"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16m-7 6h7" />
+                </svg>
+                <span className="hidden md:inline">Bulk</span>
+              </button>
+
+              <div className="h-6 w-px bg-divider" />
+
+              {/* Lists Shortcut */}
+              <Link
+                href="/lists"
+                className="px-3 py-2 text-sm bg-orange-500/10 text-orange-600 rounded-lg hover:bg-orange-500/20 flex items-center gap-1.5"
+                title="My Keyword Lists"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+                <span className="hidden md:inline">Lists</span>
+              </Link>
+            </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-[1400px] mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column - Input */}
-          <div className="lg:col-span-1 space-y-4">
-            {/* Seed Keywords Card */}
-            <div className="card p-6">
-              <h2 className="font-semibold text-text mb-4">Seed Keywords</h2>
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="seed-keywords" className="sr-only">Seed Keywords</label>
-                  <textarea
-                    id="seed-keywords"
-                    value={seedInput}
-                    onChange={(e) => setSeedInput(e.target.value)}
-                    placeholder="Enter seed keywords for your Google Ads campaign&#10;e.g., running shoes&#10;athletic footwear&#10;sports sneakers"
-                    rows={5}
-                    className="w-full px-4 py-3 bg-surface2 rounded-xl text-text placeholder:text-text3 focus:outline-none focus:ring-2 focus:ring-accent resize-none"
-                    aria-label="Enter seed keywords for your Google Ads campaign"
-                  />
-                  <p className="text-xs text-text3 mt-1">Separate with commas or new lines (max 20)</p>
+      {/* Main Layout - History Sidebar + Results */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* History Sidebar */}
+        <aside className={`${showHistory ? 'w-64' : 'w-0'} flex-shrink-0 bg-surface border-r border-divider transition-all overflow-hidden`}>
+          <div className="w-64 h-full flex flex-col">
+            <div className="p-3 border-b border-divider flex items-center justify-between">
+              <span className="font-medium text-text text-sm">Search History</span>
+              {searchHistory.length > 0 && (
+                <button
+                  onClick={clearHistory}
+                  className="text-xs text-text3 hover:text-red-500"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {searchHistory.length === 0 ? (
+                <div className="p-4 text-center text-text3 text-sm">
+                  No searches yet
                 </div>
-
-                {/* Options */}
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-text">Options</p>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={options.generateVariations}
-                      onChange={(e) => setOptions({ ...options, generateVariations: e.target.checked })}
-                      className="w-4 h-4 rounded"
-                      aria-label="Generate keyword variations and match types"
-                    />
-                    <span className="text-sm text-text2">Generate keyword variations & match types</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={options.generateSynonyms}
-                      onChange={(e) => setOptions({ ...options, generateSynonyms: e.target.checked })}
-                      className="w-4 h-4 rounded"
-                      aria-label="Generate semantic keyword synonyms"
-                    />
-                    <span className="text-sm text-text2">Generate semantic keyword synonyms</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={options.includeNegatives}
-                      onChange={(e) => setOptions({ ...options, includeNegatives: e.target.checked })}
-                      className="w-4 h-4 rounded"
-                      aria-label="Suggest negative keywords for Google Ads"
-                    />
-                    <span className="text-sm text-text2">Suggest negative keywords for Google Ads</span>
-                  </label>
-                </div>
-
-                {/* Collapsible Enrichment Section */}
-                <div className="pt-4 border-t border-divider">
-                  <button
-                    onClick={() => setExpandedSection(
-                      expandedSection === 'enrichment' ? null : 'enrichment'
-                    )}
-                    className="w-full flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 gap-3 sm:gap-0 bg-surface2 rounded-lg hover:bg-surface3 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-400 flex items-center justify-center flex-shrink-0">
-                        <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                        </svg>
-                      </div>
-                      <div className="text-left">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-text">
-                            Get Real Keyword Data
-                          </span>
-                          <span className="px-2 py-0.5 text-xs bg-emerald-100 text-emerald-700 rounded" aria-label="New feature">
-                            NEW
-                          </span>
+              ) : (
+                <div className="divide-y divide-divider">
+                  {searchHistory.map(item => (
+                    <div
+                      key={item.id}
+                      className="p-3 hover:bg-surface2 cursor-pointer group"
+                      onClick={() => loadFromHistory(item)}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-text truncate">
+                            {item.seedKeywords.slice(0, 2).join(', ')}
+                            {item.seedKeywords.length > 2 && ` +${item.seedKeywords.length - 2}`}
+                          </p>
+                          <p className="text-xs text-text3 mt-0.5">
+                            {item.keywordCount} keywords • {item.targetLocation} • {formatDate(item.timestamp)}
+                          </p>
                         </div>
-                        <p className="text-xs text-text3">
-                          Add search volume, CPC, competition, and keyword difficulty from Google Ads Keyword Planner
-                        </p>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteHistoryItem(item.id);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-1 text-text3 hover:text-red-500"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
                       </div>
                     </div>
-                    <svg className={`w-5 h-5 text-text3 transition-transform flex-shrink-0 ${expandedSection === 'enrichment' ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
+
+        {/* Toggle History Button */}
+        <button
+          onClick={() => setShowHistory(!showHistory)}
+          className="absolute left-0 top-1/2 -translate-y-1/2 z-30 bg-surface2 p-1 rounded-r-lg border border-l-0 border-divider hover:bg-surface3"
+          style={{ marginLeft: showHistory ? '256px' : '0' }}
+        >
+          <svg className={`w-4 h-4 text-text3 transition-transform ${showHistory ? '' : 'rotate-180'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+
+        {/* Main Content */}
+        <main className="flex-1 flex flex-col min-w-0">
+          {/* Empty State */}
+          {keywords.length === 0 && !generating && (
+            <div className="flex-1 flex items-center justify-center p-8">
+              <div className="text-center max-w-lg">
+                <div className="w-20 h-20 rounded-2xl bg-surface2 flex items-center justify-center mx-auto mb-6">
+                  <svg className="w-10 h-10 text-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-semibold text-text mb-2">Start Your Keyword Research</h2>
+                <p className="text-text2 mb-6">
+                  Enter seed keywords above, import a CSV, or paste from clipboard
+                </p>
+                <div className="flex flex-wrap gap-2 justify-center text-sm mb-6">
+                  <span className="px-3 py-1.5 bg-surface2 rounded-lg text-text3">portugal golden visa</span>
+                  <span className="px-3 py-1.5 bg-surface2 rounded-lg text-text3">best crm software</span>
+                  <span className="px-3 py-1.5 bg-surface2 rounded-lg text-text3">running shoes</span>
+                </div>
+                <div className="flex gap-3 justify-center">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-4 py-2 bg-surface2 rounded-lg hover:bg-surface3 text-text flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                     </svg>
+                    Import CSV
+                  </button>
+                  <button
+                    onClick={handlePasteFromClipboard}
+                    className="px-4 py-2 bg-surface2 rounded-lg hover:bg-surface3 text-text flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    Paste Keywords
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Loading State */}
+          {generating && (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                <p className="text-text2">Generating keywords...</p>
+              </div>
+            </div>
+          )}
+
+          {/* Results */}
+          {keywords.length > 0 && !generating && (
+            <div className="flex-1 flex flex-col min-h-0">
+              {/* Toolbar */}
+              <div className="bg-surface border-b border-divider px-4 py-2 flex-shrink-0">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-sm text-text font-medium">{filteredKeywords.length} keywords</span>
+
+                  {/* Enrichment Progress */}
+                  {enrichmentProgress && (
+                    <span className="text-sm text-accent flex items-center gap-2">
+                      <div className="w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                      {enrichmentProgress}
+                    </span>
+                  )}
+
+                  <div className="h-4 w-px bg-divider" />
+
+                  {/* Page Size */}
+                  <select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    className="px-2 py-1.5 text-sm bg-surface2 rounded-lg"
+                  >
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={200}>200</option>
+                  </select>
+
+                  <div className="h-4 w-px bg-divider" />
+
+                  {/* Enrich Actions */}
+                  <button
+                    onClick={handleEnrichVolume}
+                    disabled={enrichingVolume || keywords.length === 0}
+                    className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {enrichingVolume && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                    📊 Get Volume {selectedKeywords.size > 0 ? `(${selectedKeywords.size})` : keywords.length > 0 ? `(${Math.min(keywords.length, 100)})` : ''}
                   </button>
 
-                  {expandedSection === 'enrichment' && (
-                    <div className="mt-3 p-4 space-y-4 border-l-2 border-accent/30">
-                      {/* Location Targeting - FIRST and PROMINENT */}
-                      <div className="p-3 bg-accent/5 rounded-lg border border-accent/20">
-                        <div className="flex items-center gap-2 mb-2">
-                          <span className="text-xl">📍</span>
-                          <label className="text-sm font-medium text-text">
-                            Target Location
-                          </label>
-                          <div className="group relative">
-                            <svg className="w-4 h-4 text-text3 cursor-help" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <div className="invisible group-hover:visible absolute left-0 top-6 z-10 w-64 p-2 bg-gray-900 text-white text-xs rounded shadow-lg">
-                              Metrics vary drastically by location. Example: "golden visa" has 10K/mo in US vs 500/mo in Portugal
-                            </div>
-                          </div>
-                        </div>
-                        <select
-                          value={options.targetLocation}
-                          onChange={(e) => setOptions({ ...options, targetLocation: e.target.value })}
-                          className="w-full px-3 py-2 text-sm bg-white rounded-lg border border-divider focus:ring-2 focus:ring-accent focus:outline-none"
-                        >
-                          {TARGET_LOCATIONS.map(loc => (
-                            <option key={loc.code} value={loc.code}>{loc.name}</option>
-                          ))}
-                        </select>
-                      </div>
+                  <button
+                    onClick={handleClassifyIntent}
+                    disabled={enrichingIntent || keywords.length === 0}
+                    className="px-3 py-1.5 text-sm bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    {enrichingIntent && <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                    🧠 Classify Intent {selectedKeywords.size > 0 ? `(${selectedKeywords.size})` : keywords.length > 0 ? `(${Math.min(keywords.length, 1000)})` : ''}
+                  </button>
 
-                      {/* Enable Toggle */}
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-text">
-                          Enable Keyword Enrichment
-                        </span>
-                        <label className="relative inline-flex items-center cursor-pointer">
+                  <div className="flex-1" />
+
+                  {/* Filter */}
+                  <select
+                    value={intentFilter}
+                    onChange={(e) => setIntentFilter(e.target.value)}
+                    className="px-2 py-1.5 text-sm bg-surface2 rounded-lg"
+                  >
+                    <option value="all">All Intents</option>
+                    <option value="transactional">Transactional</option>
+                    <option value="commercial">Commercial</option>
+                    <option value="informational">Informational</option>
+                  </select>
+
+                  {/* Actions */}
+                  {selectedKeywords.size > 0 && (
+                    <>
+                      <span className="text-sm text-text2">{selectedKeywords.size} selected</span>
+                      <button onClick={copyToClipboard} className="px-2 py-1.5 text-sm bg-surface2 rounded-lg hover:bg-surface3">Copy</button>
+                      <button onClick={exportCSV} className="px-2 py-1.5 text-sm bg-accent text-white rounded-lg">Export</button>
+                      <button onClick={openSaveToListModal} className="px-2 py-1.5 text-sm bg-orange-500 text-white rounded-lg hover:bg-orange-600 flex items-center gap-1">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                        </svg>
+                        Save to List
+                      </button>
+                      <button onClick={() => setShowCampaignWizard(true)} className="px-2 py-1.5 text-sm bg-emerald-500 text-white rounded-lg">+ Campaign</button>
+                    </>
+                  )}
+                  <button onClick={selectAll} className="text-sm text-accent hover:underline">Select All</button>
+                  {selectedKeywords.size > 0 && <button onClick={clearSelection} className="text-sm text-text3 hover:underline">Clear</button>}
+                </div>
+              </div>
+
+              {/* Table - All KPIs visible */}
+              <div className="flex-1 overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-surface2 sticky top-0 z-10">
+                    <tr>
+                      <th className="w-8 p-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedKeywords.size === sortedKeywords.length && sortedKeywords.length > 0}
+                          onChange={() => selectedKeywords.size === sortedKeywords.length ? clearSelection() : selectAll()}
+                          className="w-4 h-4"
+                        />
+                      </th>
+                      <th className="p-2 text-left font-medium text-text2 cursor-pointer min-w-[200px]" onClick={() => handleSort('keyword')}>
+                        Keyword {sortBy === 'keyword' && (sortDir === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th className="p-2 text-right font-medium text-text2 w-20 cursor-pointer" onClick={() => handleSort('volume')}>
+                        Volume {sortBy === 'volume' && (sortDir === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th className="p-2 text-right font-medium text-text2 w-16 cursor-pointer" onClick={() => handleSort('cpc')}>
+                        CPC {sortBy === 'cpc' && (sortDir === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th className="p-2 text-right font-medium text-text2 w-20" title="Low Bid - High Bid">Bid Range</th>
+                      <th className="p-2 text-center font-medium text-text2 w-12 cursor-pointer" onClick={() => handleSort('competition')}>
+                        Comp {sortBy === 'competition' && (sortDir === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th className="p-2 text-right font-medium text-text2 w-14 cursor-pointer" onClick={() => handleSort('trend')} title="3 Month Change">
+                        3M% {sortBy === 'trend' && (sortDir === 'asc' ? '↑' : '↓')}
+                      </th>
+                      <th className="p-2 text-right font-medium text-text2 w-14" title="Year over Year Change">YoY%</th>
+                      <th className="p-2 text-center font-medium text-text2 w-28">Intent</th>
+                      <th className="p-2 text-center font-medium text-text2 w-20">Match Type</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedKeywords.map((kw) => (
+                      <tr
+                        key={kw.keyword}
+                        className={`border-t border-divider hover:bg-surface2/50 ${selectedKeywords.has(kw.keyword) ? 'bg-accent/5' : ''}`}
+                      >
+                        <td className="p-2">
                           <input
                             type="checkbox"
-                            checked={options.enrichWithMetrics}
-                            onChange={(e) => setOptions({ ...options, enrichWithMetrics: e.target.checked })}
-                            className="sr-only peer"
-                            aria-label="Enable keyword enrichment to get real search volume, CPC, and competition data"
+                            checked={selectedKeywords.has(kw.keyword)}
+                            onChange={() => toggleKeyword(kw.keyword)}
+                            className="w-4 h-4"
                           />
-                          <div className="w-11 h-6 bg-surface3 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-accent rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
-                        </label>
-                      </div>
-
-                      {/* Rest of enrichment options (only when enabled) */}
-                      {options.enrichWithMetrics && (
-                        <div className="space-y-3 pt-3 border-t border-divider">
-                          {/* Data Sources */}
-                          <div>
-                            <p className="text-xs font-medium text-text mb-2">Data Sources</p>
-                            <div className="space-y-1.5">
-                              <label className="flex items-center gap-2 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={true}
-                                  disabled
-                                  className="w-3.5 h-3.5 rounded"
-                                />
-                                <span className="text-xs text-text">
-                                  Google Ads <span className="text-success font-medium">✓ Free</span>
-                                </span>
-                              </label>
-                            </div>
-
-                            {/* Premium Metrics Teaser */}
-                            <div className="mt-3 p-3 bg-gradient-to-r from-accent/10 to-purple-500/10 border border-accent/20 rounded-lg">
-                              <div className="flex items-start gap-2">
-                                <div className="text-lg">✨</div>
-                                <div className="flex-1">
-                                  <p className="text-xs font-semibold text-text mb-1">Premium Metrics Coming Soon</p>
-                                  <p className="text-xs text-text3 leading-relaxed">
-                                    Keyword difficulty, SERP features, intent scoring, and competitor analysis with pay-per-use tokens
-                                  </p>
-                                  <div className="flex items-center gap-2 mt-2 text-xs text-text3">
-                                    <span className="opacity-60">🎯 Moz Difficulty</span>
-                                    <span className="opacity-60">•</span>
-                                    <span className="opacity-60">📊 SERP Analysis</span>
-                                    <span className="opacity-60">•</span>
-                                    <span className="opacity-60">🧠 AI Intent</span>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Max Keywords Slider */}
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="text-xs font-medium text-text">Max Keywords</label>
-                              <span className="text-xs text-accent font-medium">{options.maxKeywordsToEnrich}</span>
-                            </div>
-                            <input
-                              type="range"
-                              min="10"
-                              max="100"
-                              step="10"
-                              value={options.maxKeywordsToEnrich}
-                              onChange={(e) => setOptions({ ...options, maxKeywordsToEnrich: parseInt(e.target.value) })}
-                              className="w-full h-2 bg-surface3 rounded-lg appearance-none cursor-pointer accent-accent"
-                            />
-                            <p className="text-xs text-text3 mt-1">Limit enrichment to top keywords</p>
-                          </div>
-
-                          {/* Min Volume Filter */}
-                          <div>
-                            <label className="text-xs font-medium text-text block mb-1">Min Search Volume</label>
-                            <input
-                              type="number"
-                              min="0"
-                              step="100"
-                              value={options.minSearchVolume}
-                              onChange={(e) => setOptions({ ...options, minSearchVolume: parseInt(e.target.value) || 0 })}
-                              className="w-full px-3 py-1.5 text-sm bg-surface2 rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-accent"
-                              placeholder="e.g., 100"
-                            />
-                            <p className="text-xs text-text3 mt-1">Filter keywords below this volume</p>
-                          </div>
-
-                          {/* Sort Toggle */}
-                          <label className="flex items-center gap-2 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={options.sortByMetrics}
-                              onChange={(e) => setOptions({ ...options, sortByMetrics: e.target.checked })}
-                              className="w-3.5 h-3.5 rounded"
-                            />
-                            <span className="text-xs text-text2">Sort by opportunity score</span>
-                          </label>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  onClick={handleGenerate}
-                  disabled={generating || !seedInput.trim()}
-                  className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-400 text-white font-medium rounded-xl hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {generating ? (
-                    <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
-                      Generate Google Ads Keywords
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* Stats Card */}
-            {stats && (
-              <div className="card p-4">
-                <h3 className="text-sm font-medium text-text mb-3">Generation Stats</h3>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-3 bg-surface2 rounded-lg text-center">
-                    <p className="text-2xl font-bold text-text">{stats.totalGenerated}</p>
-                    <p className="text-xs text-text3">Total Keywords</p>
-                  </div>
-                  <div className="p-3 bg-surface2 rounded-lg text-center">
-                    <p className="text-2xl font-bold text-text">{stats.clusters}</p>
-                    <p className="text-xs text-text3">Clusters</p>
-                  </div>
-                  <div className="p-3 bg-success-light rounded-lg text-center">
-                    <p className="text-2xl font-bold text-success">{stats.byIntent.transactional}</p>
-                    <p className="text-xs text-text3">Transactional</p>
-                  </div>
-                  <div className="p-3 bg-warning-light rounded-lg text-center">
-                    <p className="text-2xl font-bold text-warning">{stats.byIntent.commercial}</p>
-                    <p className="text-xs text-text3">Commercial</p>
-                  </div>
-                </div>
-
-                {/* NEW: Enrichment Stats */}
-                {stats.enrichment && (
-                  <div className="mt-4 pt-4 border-t border-divider">
-                    <h4 className="text-xs font-medium text-text mb-2 flex items-center gap-1">
-                      <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
-                      Enrichment Stats
-                    </h4>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-text3">Enriched:</span>
-                        <span className="font-medium text-text">{stats.enrichment.enriched} keywords</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-text3">From cache:</span>
-                        <span className="font-medium text-emerald-600">{stats.enrichment.cached}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-text3">Google Ads:</span>
-                        <span className="font-medium text-text">{stats.enrichment.googleFetched}</span>
-                      </div>
-                      {stats.enrichment.mozFetched > 0 && (
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-text3">Moz:</span>
-                          <span className="font-medium text-text">{stats.enrichment.mozFetched}</span>
-                        </div>
-                      )}
-                      {stats.enrichment.dataForSeoFetched > 0 && (
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-text3">DataForSEO:</span>
-                          <span className="font-medium text-text">{stats.enrichment.dataForSeoFetched}</span>
-                        </div>
-                      )}
-                      <div className="flex items-center justify-between text-xs pt-2 border-t border-divider">
-                        <span className="text-text3">Est. Cost:</span>
-                        <span className="font-semibold text-accent">${stats.enrichment.estimatedCost.toFixed(2)}</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Negative Suggestions */}
-            {negativeKeywords.length > 0 && (
-              <div className="card p-4 border-danger/20 bg-danger-light/30">
-                <h3 className="text-sm font-medium text-danger mb-3">Suggested Negatives</h3>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {negativeKeywords.slice(0, 10).map((kw, i) => (
-                    <div key={i} className="flex items-center justify-between text-sm">
-                      <span className="text-text">{kw.keyword}</span>
-                      <span className="text-xs text-text3 truncate max-w-[150px]" title={kw.negativeReason}>
-                        {kw.negativeReason?.split(' - ')[0]}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Tips */}
-            <div className="card p-4 bg-accent-light border-accent/20">
-              <h3 className="text-sm font-medium text-accent mb-2">Tips</h3>
-              <ul className="text-xs text-text2 space-y-1">
-                <li>Start with 3-5 broad seed keywords</li>
-                <li>Enable enrichment for real search volume & CPC data</li>
-                <li>Use transactional keywords for higher conversion</li>
-                <li>Group by clusters for better ad groups</li>
-                <li>Export CSV and import to Google Ads Editor</li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Right Column - Results */}
-          <div className="lg:col-span-2">
-            {error && (
-              <div className="card p-6 border-2 border-danger/20 bg-danger-light mb-4">
-                <div className="flex items-center gap-3">
-                  <svg className="w-6 h-6 text-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <div>
-                    <h3 className="font-semibold text-danger">Error</h3>
-                    <p className="text-sm text-text2">{error}</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {keywords.length === 0 && !generating && (
-              <div className="card p-12 text-center">
-                <div className="w-20 h-20 rounded-2xl bg-surface2 flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-10 h-10 text-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                  </svg>
-                </div>
-                <h2 className="text-xl font-semibold text-text mb-2">Enter Seed Keywords to Generate Google Ads Keywords</h2>
-                <p className="text-text2 max-w-md mx-auto mb-4">
-                  We'll generate keyword variations, synonyms, match types, and negative keyword suggestions for your Google Ads campaigns.
-                </p>
-
-                {/* Enrichment teaser */}
-                <div className="inline-flex items-center gap-2 px-4 py-2 bg-accent/10 rounded-lg text-sm text-accent">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-                  </svg>
-                  <span>
-                    Try enabling <strong>Get Real Keyword Data</strong> for real metrics!
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {generating && (
-              <div className="card p-12 text-center">
-                <div className="w-16 h-16 rounded-full border-4 border-accent border-t-transparent animate-spin mx-auto mb-4" />
-                <h2 className="text-xl font-semibold text-text mb-2">Generating Google Ads Keywords...</h2>
-                <p className="text-text2">Creating keyword variations, synonyms, match types, and negative keyword suggestions</p>
-              </div>
-            )}
-
-            {keywords.length > 0 && !generating && (
-              <div className="space-y-4">
-                {/* Filters */}
-                <div className="card p-4">
-                  <div className="flex flex-wrap items-center gap-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-text2">View:</span>
-                      <button
-                        onClick={() => setViewMode('list')}
-                        className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${viewMode === 'list' ? 'bg-accent text-white' : 'bg-surface2 text-text2 hover:bg-surface3'}`}
-                      >
-                        List
-                      </button>
-                      <button
-                        onClick={() => setViewMode('clusters')}
-                        className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${viewMode === 'clusters' ? 'bg-accent text-white' : 'bg-surface2 text-text2 hover:bg-surface3'}`}
-                      >
-                        Clusters
-                      </button>
-                    </div>
-
-                    <div className="h-6 w-px bg-divider" />
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-text2">Type:</span>
-                      <select
-                        value={typeFilter}
-                        onChange={(e) => setTypeFilter(e.target.value)}
-                        className="px-2 py-1 text-sm bg-surface2 rounded-lg text-text"
-                      >
-                        <option value="all">All</option>
-                        <option value="seed">Seed</option>
-                        <option value="variation">Variation</option>
-                        <option value="synonym">Synonym</option>
-                        <option value="modifier">Modifier</option>
-                        <option value="long_tail">Long Tail</option>
-                      </select>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-text2">Intent:</span>
-                      <select
-                        value={intentFilter}
-                        onChange={(e) => setIntentFilter(e.target.value)}
-                        className="px-2 py-1 text-sm bg-surface2 rounded-lg text-text"
-                      >
-                        <option value="all">All</option>
-                        <option value="transactional">Transactional</option>
-                        <option value="commercial">Commercial</option>
-                        <option value="informational">Informational</option>
-                      </select>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-text2">Match:</span>
-                      <select
-                        value={matchFilter}
-                        onChange={(e) => setMatchFilter(e.target.value)}
-                        className="px-2 py-1 text-sm bg-surface2 rounded-lg text-text"
-                      >
-                        <option value="all">All</option>
-                        <option value="EXACT">Exact</option>
-                        <option value="PHRASE">Phrase</option>
-                        <option value="BROAD">Broad</option>
-                      </select>
-                    </div>
-
-                    <div className="flex-1" />
-
-                    <div className="flex items-center gap-2">
-                      <button onClick={selectAll} className="text-sm text-accent hover:underline">
-                        Select All
-                      </button>
-                      <button onClick={clearSelection} className="text-sm text-text3 hover:underline">
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Bulk Action Bar */}
-                <BulkActionBar
-                  selectedKeywords={keywords.filter(k => selectedKeywords.has(k.keyword))}
-                  campaigns={campaigns}
-                  loadingCampaigns={loadingCampaigns}
-                  onAddToCampaign={handleAddToCampaign}
-                  onCreateCampaign={handleCreateCampaign}
-                  onExport={exportCSV}
-                  onTrackInSERP={handleTrackInSERP}
-                  onClearSelection={clearSelection}
-                />
-
-                {/* List View */}
-                {viewMode === 'list' && (
-                  <>
-                    <KeywordTable
-                      keywords={filteredKeywords}
-                      selectedKeywords={selectedKeywords}
-                      onToggleKeyword={toggleKeyword}
-                      onToggleAll={() => selectedKeywords.size === filteredKeywords.length ? clearSelection() : selectAll()}
-                      onKeywordDetail={setSelectedKeywordForDetail}
-                      showMetrics={options.enrichWithMetrics}
-                      targetLocation={options.targetLocation}
-                    />
-                    {filteredKeywords.length > 100 && (
-                      <div className="p-3 bg-surface2 text-center text-sm text-text2 rounded-b-lg">
-                        Showing first 100 of {filteredKeywords.length} keywords
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {/* Clusters View */}
-                {viewMode === 'clusters' && (
-                  <div className="space-y-4">
-                    {clusters.map((cluster, i) => (
-                      <div key={i} className="card overflow-hidden">
-                        <div className="p-4 bg-surface2 flex items-center justify-between">
-                          <div>
-                            <h3 className="font-semibold text-text capitalize">{cluster.theme}</h3>
-                            <p className="text-xs text-text3">{cluster.keywords.length} keywords</p>
-                          </div>
-                          <span className="px-3 py-1 bg-accent-light text-accent text-sm rounded-lg">
-                            {cluster.suggestedAdGroup}
-                          </span>
-                        </div>
-                        <div className="p-4">
-                          <div className="flex flex-wrap gap-2">
-                            {cluster.keywords.slice(0, 15).map((kw, j) => (
-                              <button
-                                key={j}
-                                onClick={() => toggleKeyword(kw.keyword)}
-                                className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                                  selectedKeywords.has(kw.keyword)
-                                    ? 'bg-accent text-white'
-                                    : 'bg-surface2 text-text hover:bg-surface3'
-                                }`}
-                              >
-                                {kw.keyword}
-                              </button>
-                            ))}
-                            {cluster.keywords.length > 15 && (
-                              <span className="px-3 py-1.5 text-sm text-text3">
-                                +{cluster.keywords.length - 15} more
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                        </td>
+                        <td className="p-2 font-medium text-text">{kw.keyword}</td>
+                        <td className="p-2 text-right tabular-nums">
+                          {kw.metrics?.searchVolume ? kw.metrics.searchVolume.toLocaleString() : <span className="text-text3">—</span>}
+                        </td>
+                        <td className="p-2 text-right tabular-nums">
+                          {kw.metrics?.cpc ? `$${kw.metrics.cpc.toFixed(2)}` : <span className="text-text3">—</span>}
+                        </td>
+                        <td className="p-2 text-right text-xs tabular-nums text-text2">
+                          {kw.metrics?.lowBidMicros ? (
+                            <span>{formatBid(kw.metrics.lowBidMicros)}-{formatBid(kw.metrics.highBidMicros)}</span>
+                          ) : <span className="text-text3">—</span>}
+                        </td>
+                        <td className="p-2 text-center">
+                          {kw.metrics?.competition ? (
+                            <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${COMPETITION_COLORS[kw.metrics.competition]}`}>
+                              {kw.metrics.competition === 'HIGH' ? 'High' : kw.metrics.competition === 'MEDIUM' ? 'Medium' : 'Low'}
+                            </span>
+                          ) : <span className="text-text3">—</span>}
+                        </td>
+                        <td className="p-2 text-right tabular-nums">
+                          {kw.metrics?.threeMonthChange != null ? (
+                            <span className={`text-xs font-medium ${kw.metrics.threeMonthChange > 0 ? 'text-green-600' : kw.metrics.threeMonthChange < 0 ? 'text-red-500' : 'text-text3'}`}>
+                              {kw.metrics.threeMonthChange > 0 ? '+' : ''}{kw.metrics.threeMonthChange}%
+                            </span>
+                          ) : <span className="text-text3">—</span>}
+                        </td>
+                        <td className="p-2 text-right tabular-nums">
+                          {kw.metrics?.yearOverYearChange != null ? (
+                            <span className={`text-xs font-medium ${kw.metrics.yearOverYearChange > 0 ? 'text-green-600' : kw.metrics.yearOverYearChange < 0 ? 'text-red-500' : 'text-text3'}`}>
+                              {kw.metrics.yearOverYearChange > 0 ? '+' : ''}{kw.metrics.yearOverYearChange}%
+                            </span>
+                          ) : <span className="text-text3">—</span>}
+                        </td>
+                        <td className="p-2 text-center">
+                          {/* Show intent from any source (rules, embeddings, ollama) */}
+                          {kw.estimatedIntent && INTENT_COLORS[kw.estimatedIntent] ? (
+                            <span
+                              className={`px-2 py-0.5 rounded text-xs ${INTENT_COLORS[kw.estimatedIntent].bg} ${INTENT_COLORS[kw.estimatedIntent].text}`}
+                              title={`${kw.estimatedIntent}${kw.metrics?.intentSource ? ` (${kw.metrics.intentSource})` : ''}`}
+                            >
+                              {INTENT_COLORS[kw.estimatedIntent].icon} {INTENT_COLORS[kw.estimatedIntent].label}
+                            </span>
+                          ) : <span className="text-text3 text-xs">—</span>}
+                        </td>
+                        <td className="p-2 text-center">
+                          {kw.suggestedMatchType && MATCH_TYPE_LABELS[kw.suggestedMatchType] ? (
+                            <span
+                              className={`px-2 py-0.5 rounded text-xs ${MATCH_TYPE_LABELS[kw.suggestedMatchType].color}`}
+                              title={MATCH_TYPE_LABELS[kw.suggestedMatchType].desc}
+                            >
+                              {MATCH_TYPE_LABELS[kw.suggestedMatchType].label}
+                            </span>
+                          ) : <span className="text-text3 text-xs">—</span>}
+                        </td>
+                      </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="bg-surface border-t border-divider px-4 py-2 flex items-center justify-between flex-shrink-0">
+                  <span className="text-sm text-text2">
+                    Showing {startIndex + 1}-{Math.min(startIndex + pageSize, filteredKeywords.length)} of {filteredKeywords.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentPage(1)}
+                      disabled={currentPage === 1}
+                      className="px-2 py-1 text-sm bg-surface2 rounded hover:bg-surface3 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      ««
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="px-2 py-1 text-sm bg-surface2 rounded hover:bg-surface3 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      «
+                    </button>
+                    <span className="px-3 py-1 text-sm">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-2 py-1 text-sm bg-surface2 rounded hover:bg-surface3 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      »
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(totalPages)}
+                      disabled={currentPage === totalPages}
+                      className="px-2 py-1 text-sm bg-surface2 rounded hover:bg-surface3 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      »»
+                    </button>
                   </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </main>
+                </div>
+              )}
+            </div>
+          )}
+        </main>
+      </div>
 
-      {/* Onboarding Modal */}
-      {showOnboardingModal && (
+      {/* Import Modal */}
+      {showImportModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-surface rounded-2xl max-w-2xl w-full p-8 shadow-2xl">
-            <div className="flex items-start gap-4 mb-6">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-400 flex items-center justify-center flex-shrink-0">
-                <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <h2 className="text-2xl font-bold text-text mb-2">Supercharge Your Keywords with Real Data</h2>
-                <p className="text-text2">Get actual search volume, CPC, and competition metrics from Google Ads, Moz, and DataForSEO</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <div className="p-4 bg-surface2 rounded-xl">
-                <div className="text-2xl mb-2">🎯</div>
-                <h3 className="font-semibold text-text mb-1">Real Metrics</h3>
-                <p className="text-sm text-text3">Search volume, CPC, competition, and difficulty scores</p>
-              </div>
-              <div className="p-4 bg-surface2 rounded-xl">
-                <div className="text-2xl mb-2">💾</div>
-                <h3 className="font-semibold text-text mb-1">Smart Caching</h3>
-                <p className="text-sm text-text3">60-80% cache hit rate saves API costs automatically</p>
-              </div>
-              <div className="p-4 bg-surface2 rounded-xl">
-                <div className="text-2xl mb-2">🎁</div>
-                <h3 className="font-semibold text-text mb-1">Free with Google</h3>
-                <p className="text-sm text-text3">Google Ads Keyword Planner is free with active campaigns</p>
-              </div>
-            </div>
-
-            <div className="bg-accent-light border border-accent/20 rounded-xl p-4 mb-6">
-              <h4 className="font-semibold text-accent mb-2">Pricing Transparency</h4>
-              <ul className="space-y-1 text-sm text-text2">
-                <li>• <strong>Google Ads:</strong> Free (with active campaigns)</li>
-                <li>• <strong>Moz:</strong> 1 credit per keyword (bring your own API key)</li>
-                <li>• <strong>DataForSEO:</strong> ~$0.002 per keyword</li>
-              </ul>
-            </div>
-
-            {/* Don't show again checkbox */}
-            <div className="flex items-center gap-2 mt-4 p-3 bg-surface2 rounded-lg">
-              <input
-                type="checkbox"
-                id="dont-show-again"
-                checked={dontShowAgain}
-                onChange={(e) => setDontShowAgain(e.target.checked)}
-                className="w-4 h-4 rounded"
-              />
-              <label htmlFor="dont-show-again" className="text-sm text-text2 cursor-pointer">
-                Don't show this again
-              </label>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleEnableEnrichment}
-                className="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-teal-400 text-white font-semibold rounded-xl hover:opacity-90 transition-opacity"
-              >
-                Enable Metrics Enrichment
-              </button>
-              <button
-                onClick={dismissOnboarding}
-                className="px-6 py-3 bg-surface3 text-text2 rounded-xl hover:bg-surface3/80 transition-colors"
-              >
-                Maybe Later
-              </button>
+          <div className="bg-surface rounded-xl max-w-lg w-full p-6">
+            <h3 className="text-lg font-semibold text-text mb-4">Bulk Import Keywords</h3>
+            <textarea
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder="Paste keywords here (one per line or comma separated)"
+              rows={8}
+              className="w-full p-3 bg-surface2 rounded-lg text-text placeholder:text-text3 focus:outline-none focus:ring-2 focus:ring-accent resize-none"
+            />
+            <p className="text-xs text-text3 mt-2">Max 50 keywords</p>
+            <div className="flex gap-3 mt-4">
+              <button onClick={() => setShowImportModal(false)} className="flex-1 py-2 bg-surface2 rounded-lg hover:bg-surface3">Cancel</button>
+              <button onClick={handleImportFromText} className="flex-1 py-2 bg-accent text-white rounded-lg hover:bg-accent/90">Import</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Warnings Display */}
-      {warnings.length > 0 && (
-        <div className="fixed bottom-6 right-6 max-w-md z-40">
-          <div className="bg-warning-light border-2 border-warning/30 rounded-xl p-4 shadow-lg">
-            <div className="flex items-start gap-3">
-              <svg className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <div className="flex-1">
-                <h4 className="font-semibold text-warning mb-2">Quota Warnings</h4>
-                <ul className="space-y-1 text-sm text-text2">
-                  {warnings.map((warning, i) => (
-                    <li key={i}>• {warning}</li>
+      {/* Save to List Modal */}
+      {showSaveToListModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface rounded-xl shadow-xl w-full max-w-md">
+            <div className="p-5 border-b border-divider">
+              <h2 className="text-lg font-semibold text-text">Save to List</h2>
+              <p className="text-sm text-text2 mt-1">
+                {selectedKeywords.size > 0
+                  ? `Save ${selectedKeywords.size} selected keywords`
+                  : `Save all ${keywords.length} keywords`}
+              </p>
+            </div>
+
+            <div className="p-5 max-h-[60vh] overflow-y-auto">
+              {/* Create New List */}
+              <div className="mb-4">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newListName}
+                    onChange={(e) => setNewListName(e.target.value)}
+                    placeholder="New list name..."
+                    className="flex-1 px-3 py-2 bg-surface2 rounded-lg text-text placeholder:text-text3 focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                  <button
+                    onClick={createListAndSave}
+                    disabled={!newListName.trim() || creatingNewList}
+                    className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    {creatingNewList ? (
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                    )}
+                    Create
+                  </button>
+                </div>
+              </div>
+
+              {/* Existing Lists */}
+              {listsLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : lists.length === 0 ? (
+                <div className="text-center py-8 text-text3">
+                  <p>No lists yet</p>
+                  <p className="text-sm mt-1">Create your first list above</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs text-text3 uppercase tracking-wider mb-2">Or add to existing list</p>
+                  {lists.map((list) => (
+                    <button
+                      key={list.id}
+                      onClick={() => saveToList(list.id, list.name)}
+                      disabled={savingToList}
+                      className="w-full flex items-center gap-3 p-3 bg-surface2 hover:bg-surface3 rounded-lg text-left transition disabled:opacity-50"
+                    >
+                      <div
+                        className="w-8 h-8 rounded flex items-center justify-center text-sm"
+                        style={{ backgroundColor: `${list.color}20` }}
+                      >
+                        {list.icon}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-text truncate">{list.name}</p>
+                        <p className="text-xs text-text3">{list.keyword_count} keywords</p>
+                      </div>
+                      {savingToList ? (
+                        <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <svg className="w-5 h-5 text-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                      )}
+                    </button>
                   ))}
-                </ul>
-              </div>
-              <button
-                onClick={() => setWarnings([])}
-                className="text-text3 hover:text-text transition-colors"
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-divider flex justify-between items-center">
+              <Link
+                href="/lists"
+                className="text-sm text-accent hover:underline"
               >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                Manage Lists
+              </Link>
+              <button
+                onClick={() => setShowSaveToListModal(false)}
+                className="px-4 py-2 bg-surface2 rounded-lg hover:bg-surface3 text-text"
+              >
+                Cancel
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Keyword Detail Modal */}
-      <KeywordDetailModal
-        keyword={selectedKeywordForDetail}
-        onClose={() => setSelectedKeywordForDetail(null)}
-      />
+      {/* Loading Overlay for Intent/Volume */}
+      {(enrichingIntent || enrichingVolume) && (
+        <div className="fixed bottom-20 right-4 bg-surface border border-divider rounded-xl shadow-xl p-4 z-50 min-w-[280px]">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center">
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            </div>
+            <div>
+              <p className="font-medium text-text">
+                {enrichingIntent && 'Classifying Intent...'}
+                {enrichingVolume && 'Getting Search Volume...'}
+              </p>
+              <p className="text-sm text-text2">
+                {enrichingIntent && 'DataForSEO Search Intent (~$0.02/1000 kw)'}
+                {enrichingVolume && 'Google Ads Keyword Planner'}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 h-1.5 bg-surface2 rounded-full overflow-hidden">
+            <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full animate-pulse" style={{ width: '60%' }} />
+          </div>
+        </div>
+      )}
 
-      {/* Track Rankings Modal */}
-      <TrackRankingsModal
-        isOpen={showTrackModal}
-        keywordCount={trackingKeywordCount}
-        onClose={() => setShowTrackModal(false)}
-        onConfirm={confirmTrackInSERP}
-      />
+      {/* Error Toast */}
+      {error && (
+        <div className="fixed bottom-4 right-4 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 z-50">
+          <span>{error}</span>
+          <button onClick={() => setError(null)}><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+        </div>
+      )}
 
-      {/* Track Success Modal */}
-      <TrackSuccessModal
-        isOpen={showSuccessModal}
-        keywordCount={trackingKeywordCount}
-        onClose={() => setShowSuccessModal(false)}
-        onViewDashboard={handleViewDashboard}
-      />
+      {/* Success Toast */}
+      {saveSuccess && (
+        <div className="fixed bottom-4 right-4 bg-emerald-500 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 z-50 animate-in slide-in-from-bottom-4">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          <div>
+            <p className="font-medium">Saved to "{saveSuccess.listName}"</p>
+            <p className="text-sm text-emerald-100">
+              {saveSuccess.added} added{saveSuccess.duplicates > 0 ? `, ${saveSuccess.duplicates} duplicates skipped` : ''}
+            </p>
+          </div>
+          <Link
+            href="/lists"
+            className="ml-2 px-3 py-1 bg-white/20 rounded text-sm hover:bg-white/30 transition"
+          >
+            View Lists
+          </Link>
+          <button onClick={() => setSaveSuccess(null)} className="ml-1">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
-      {/* Campaign Wizard */}
-      <CampaignWizard
-        isOpen={showCampaignWizard}
-        onClose={() => {
-          setShowCampaignWizard(false);
-          setSelectedKeywords(new Set()); // Clear selection after wizard closes
-        }}
-        preSelectedKeywords={keywords.filter(k => selectedKeywords.has(k.keyword))}
-      />
+      {/* Enrichment Success Toast */}
+      {enrichSuccess && (
+        <div className="fixed bottom-4 right-4 bg-blue-500 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 z-50 animate-in slide-in-from-bottom-4">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          <div>
+            <p className="font-medium">Intent Classified</p>
+            <p className="text-sm text-blue-100">
+              {enrichSuccess.count} keywords classified
+              {enrichSuccess.cached ? ` (${enrichSuccess.cached} cached)` : ''}
+              {enrichSuccess.cost ? ` • Cost: ${enrichSuccess.cost}` : ''}
+            </p>
+          </div>
+          <button onClick={() => setEnrichSuccess(null)} className="ml-1">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* Modals */}
+      <KeywordDetailModal keyword={selectedKeywordForDetail} onClose={() => setSelectedKeywordForDetail(null)} />
+      <CampaignWizard isOpen={showCampaignWizard} onClose={() => { setShowCampaignWizard(false); setSelectedKeywords(new Set()); }} preSelectedKeywords={keywords.filter(k => selectedKeywords.has(k.keyword))} />
     </div>
   );
 }

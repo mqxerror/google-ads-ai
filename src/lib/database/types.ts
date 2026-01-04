@@ -39,6 +39,12 @@ export interface KeywordListItem {
   snapshot_opportunity_score: number | null;
   notes: string | null;
 
+  // Intent classification
+  intent: 'commercial' | 'informational' | 'navigational' | 'transactional' | null;
+  intent_confidence: number | null;
+  intent_source: 'ollama' | 'embeddings' | 'rules' | 'openai' | null;
+  intent_classified_at: Date | null;
+
   added_at: Date;
 }
 

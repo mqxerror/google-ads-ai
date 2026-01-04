@@ -1,5 +1,15 @@
 import OpenAI from 'openai';
 
+// Timeout wrapper utility for promises
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+    ),
+  ]);
+}
+
 // OpenAI client singleton
 let openaiClient: OpenAI | null = null;
 
@@ -122,11 +132,15 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 
   const client = getOpenAIClient();
 
-  const response = await client.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: normalizedText,
-    dimensions: EMBEDDING_DIMENSION, // text-embedding-3-* supports custom dimensions
-  });
+  const response = await withTimeout(
+    client.embeddings.create({
+      model: EMBEDDING_MODEL,
+      input: normalizedText,
+      dimensions: EMBEDDING_DIMENSION, // text-embedding-3-* supports custom dimensions
+    }),
+    20000, // 20 second timeout
+    'OpenAI embeddings request timed out'
+  );
 
   const embedding = response.data[0].embedding;
 
@@ -170,11 +184,15 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   for (let i = 0; i < uncachedTexts.length; i += BATCH_SIZE) {
     const batch = uncachedTexts.slice(i, i + BATCH_SIZE);
 
-    const response = await client.embeddings.create({
-      model: EMBEDDING_MODEL,
-      input: batch,
-      dimensions: EMBEDDING_DIMENSION,
-    });
+    const response = await withTimeout(
+      client.embeddings.create({
+        model: EMBEDDING_MODEL,
+        input: batch,
+        dimensions: EMBEDDING_DIMENSION,
+      }),
+      20000, // 20 second timeout
+      'OpenAI embeddings request timed out'
+    );
 
     // Sort by index to ensure order is preserved
     const sortedEmbeddings = response.data

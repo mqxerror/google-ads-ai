@@ -42,17 +42,70 @@ export default function Home() {
   const [canSync, setCanSync] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [customerId, setCustomerId] = useState<string>(() => {
-    // Restore from localStorage on initial load
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('quickads_customerId') || 'demo';
-    }
-    return 'demo';
-  });
+  const [customerId, setCustomerId] = useState<string>('demo');
   const [accounts, setAccounts] = useState<GoogleAdsAccount[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ENABLED' | 'PAUSED'>('ALL');
+  const [typeFilter, setTypeFilter] = useState<string>('ALL');
+  const [scoreFilter, setScoreFilter] = useState<'ALL' | 'HIGH' | 'MEDIUM' | 'LOW'>('ALL');
+  const [hasSpendFilter, setHasSpendFilter] = useState(false);
+  const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
+  const [filtersLoaded, setFiltersLoaded] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // Load filters from localStorage after mount (avoids hydration mismatch)
+  useEffect(() => {
+    const savedCustomerId = localStorage.getItem('quickads_customerId');
+    if (savedCustomerId) setCustomerId(savedCustomerId);
+    setSearchQuery(localStorage.getItem('quickads_searchQuery') || '');
+    setStatusFilter((localStorage.getItem('quickads_statusFilter') as 'ALL' | 'ENABLED' | 'PAUSED') || 'ALL');
+    setTypeFilter(localStorage.getItem('quickads_typeFilter') || 'ALL');
+    setScoreFilter((localStorage.getItem('quickads_scoreFilter') as 'ALL' | 'HIGH' | 'MEDIUM' | 'LOW') || 'ALL');
+    setHasSpendFilter(localStorage.getItem('quickads_hasSpendFilter') === 'true');
+    setFiltersLoaded(true);
+  }, []);
+
+  // Persist filters to localStorage
+  useEffect(() => {
+    if (filtersLoaded) {
+      localStorage.setItem('quickads_searchQuery', searchQuery);
+      localStorage.setItem('quickads_statusFilter', statusFilter);
+      localStorage.setItem('quickads_typeFilter', typeFilter);
+      localStorage.setItem('quickads_scoreFilter', scoreFilter);
+      localStorage.setItem('quickads_hasSpendFilter', hasSpendFilter.toString());
+    }
+  }, [searchQuery, statusFilter, typeFilter, scoreFilter, hasSpendFilter, filtersLoaded]);
+
   const isAuthenticated = status === 'authenticated' && session?.user;
+
+  // Filter campaigns based on search and filters
+  const filteredCampaigns = campaigns.filter(campaign => {
+    // Search filter
+    if (searchQuery && !campaign.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+      return false;
+    }
+    // Status filter
+    if (statusFilter !== 'ALL' && campaign.status !== statusFilter) {
+      return false;
+    }
+    // Type filter
+    if (typeFilter !== 'ALL' && campaign.type !== typeFilter) {
+      return false;
+    }
+    // Score filter
+    if (scoreFilter === 'HIGH' && campaign.aiScore < 70) return false;
+    if (scoreFilter === 'MEDIUM' && (campaign.aiScore < 40 || campaign.aiScore >= 70)) return false;
+    if (scoreFilter === 'LOW' && campaign.aiScore >= 40) return false;
+    // Has spend filter
+    if (hasSpendFilter && campaign.spend <= 0) return false;
+    return true;
+  });
+
+  // Get unique campaign types for filter
+  const campaignTypes = [...new Set(campaigns.map(c => c.type))];
+
+  // Check if any filters are active
+  const hasActiveFilters = statusFilter !== 'ALL' || typeFilter !== 'ALL' || scoreFilter !== 'ALL' || hasSpendFilter;
 
   // Persist customerId to localStorage whenever it changes
   useEffect(() => {
@@ -343,6 +396,20 @@ export default function Home() {
                     </div>
                   </Link>
                   <Link
+                    href="/lists"
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-orange-500/10 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-text">Keyword Lists</p>
+                      <p className="text-xs text-text3">Organize & cluster keywords</p>
+                    </div>
+                  </Link>
+                  <Link
                     href="/serp-intelligence"
                     className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors"
                   >
@@ -354,6 +421,18 @@ export default function Home() {
                     <div>
                       <p className="text-sm font-medium text-text">SERP Intelligence</p>
                       <p className="text-xs text-text3">Track positions & PPC opportunities</p>
+                    </div>
+                  </Link>
+                  <Link
+                    href="/intelligence"
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors bg-purple-500/5 border-l-2 border-purple-500"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center text-lg">
+                      &#129504;
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-purple-600">Intelligence Center</p>
+                      <p className="text-xs text-text3">Brand & audience research</p>
                     </div>
                   </Link>
                 </div>
@@ -552,7 +631,14 @@ export default function Home() {
             {/* Campaigns Table */}
             <div className="card">
               <div className="px-6 py-4 border-b border-divider flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-text">Campaigns</h3>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-semibold text-text">Campaigns</h3>
+                  {(searchQuery || hasActiveFilters) && (
+                    <span className="text-sm text-text3">
+                      {filteredCampaigns.length} of {campaigns.length}
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-3">
                   <div className="relative">
                     <svg className="w-4 h-4 text-text3 absolute left-3 top-1/2 -translate-y-1/2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -561,20 +647,161 @@ export default function Home() {
                     <input
                       type="text"
                       placeholder="Search..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
                       className="pl-9 pr-4 py-2 bg-surface2 rounded-lg text-sm text-text placeholder:text-text3 focus:outline-none focus:ring-2 focus:ring-accent w-48"
                     />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-text3 hover:text-text"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
-                  <button className="px-4 py-2 bg-surface2 rounded-lg text-sm text-text2 hover:bg-divider transition-colors">
-                    Filters
-                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowFiltersDropdown(!showFiltersDropdown)}
+                      className={`px-4 py-2 rounded-lg text-sm transition-colors flex items-center gap-2 ${
+                        hasActiveFilters
+                          ? 'bg-accent text-white'
+                          : 'bg-surface2 text-text2 hover:bg-divider'
+                      }`}
+                    >
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                      </svg>
+                      Filters
+                      {hasActiveFilters && (
+                        <span className="w-2 h-2 bg-white rounded-full" />
+                      )}
+                    </button>
+                    {showFiltersDropdown && (
+                      <div className="absolute top-full right-0 mt-2 w-64 bg-surface rounded-xl shadow-lg border border-divider p-4 z-50">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="font-medium text-text text-sm">Filters</span>
+                          {hasActiveFilters && (
+                            <button
+                              onClick={() => {
+                                setSearchQuery('');
+                                setStatusFilter('ALL');
+                                setTypeFilter('ALL');
+                                setScoreFilter('ALL');
+                                setHasSpendFilter(false);
+                              }}
+                              className="text-xs text-accent hover:underline"
+                            >
+                              Clear all
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Status Filter */}
+                        <div className="mb-3">
+                          <label className="text-xs text-text3 mb-1.5 block">Status</label>
+                          <select
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+                            className="w-full px-3 py-2 bg-surface2 rounded-lg text-sm text-text border-none focus:outline-none focus:ring-2 focus:ring-accent"
+                          >
+                            <option value="ALL">All statuses</option>
+                            <option value="ENABLED">Enabled</option>
+                            <option value="PAUSED">Paused</option>
+                          </select>
+                        </div>
+
+                        {/* Type Filter */}
+                        <div className="mb-3">
+                          <label className="text-xs text-text3 mb-1.5 block">Campaign Type</label>
+                          <select
+                            value={typeFilter}
+                            onChange={(e) => setTypeFilter(e.target.value)}
+                            className="w-full px-3 py-2 bg-surface2 rounded-lg text-sm text-text border-none focus:outline-none focus:ring-2 focus:ring-accent"
+                          >
+                            <option value="ALL">All types</option>
+                            {campaignTypes.map(type => (
+                              <option key={type} value={type}>{type}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Score Filter */}
+                        <div className="mb-3">
+                          <label className="text-xs text-text3 mb-1.5 block">AI Score</label>
+                          <select
+                            value={scoreFilter}
+                            onChange={(e) => setScoreFilter(e.target.value as typeof scoreFilter)}
+                            className="w-full px-3 py-2 bg-surface2 rounded-lg text-sm text-text border-none focus:outline-none focus:ring-2 focus:ring-accent"
+                          >
+                            <option value="ALL">All scores</option>
+                            <option value="HIGH">High (70+)</option>
+                            <option value="MEDIUM">Medium (40-69)</option>
+                            <option value="LOW">Low (&lt;40)</option>
+                          </select>
+                        </div>
+
+                        {/* Has Spend Checkbox */}
+                        <div className="mb-4 pt-3 border-t border-divider">
+                          <label className="flex items-center gap-2 cursor-pointer group">
+                            <input
+                              type="checkbox"
+                              checked={hasSpendFilter}
+                              onChange={(e) => setHasSpendFilter(e.target.checked)}
+                              className="w-4 h-4 rounded border-divider text-accent focus:ring-accent"
+                            />
+                            <span className="text-sm text-text group-hover:text-accent transition-colors">
+                              Only with spend
+                            </span>
+                          </label>
+                          <p className="text-xs text-text3 mt-1 ml-6">
+                            Hide campaigns with $0 spend
+                          </p>
+                        </div>
+
+                        <button
+                          onClick={() => setShowFiltersDropdown(false)}
+                          className="w-full py-2 bg-accent text-white rounded-lg text-sm font-medium hover:bg-accent-hover transition-colors"
+                        >
+                          Apply Filters
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
               {loading ? (
                 <div className="p-12 text-center text-text2">Loading campaigns...</div>
+              ) : filteredCampaigns.length === 0 ? (
+                <div className="p-12 text-center">
+                  <div className="text-4xl mb-3">🔍</div>
+                  <p className="text-text2 mb-2">No campaigns found</p>
+                  <p className="text-text3 text-sm">
+                    {searchQuery || hasActiveFilters
+                      ? 'Try adjusting your search or filters'
+                      : 'Create your first campaign to get started'}
+                  </p>
+                  {(searchQuery || hasActiveFilters) && (
+                    <button
+                      onClick={() => {
+                        setSearchQuery('');
+                        setStatusFilter('ALL');
+                        setTypeFilter('ALL');
+                        setScoreFilter('ALL');
+                        setHasSpendFilter(false);
+                      }}
+                      className="mt-4 px-4 py-2 bg-accent text-white rounded-lg text-sm hover:bg-accent-hover transition-colors"
+                    >
+                      Clear filters
+                    </button>
+                  )}
+                </div>
               ) : (
                 <div className="divide-y divide-divider">
-                  {campaigns.map(campaign => (
+                  {filteredCampaigns.map(campaign => (
                     <div key={campaign.id} className="campaign-row px-6 py-4 flex items-center">
                       {/* Campaign Info */}
                       <div className="flex items-center gap-4 flex-1">
@@ -789,6 +1016,27 @@ export default function Home() {
                     <div className="flex-1">
                       <p className="text-sm font-medium text-text">Keyword Factory</p>
                       <p className="text-xs text-text2">Generate variations & match types</p>
+                    </div>
+                    <svg className="w-4 h-4 text-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </Link>
+
+                {/* Keyword Lists */}
+                <Link
+                  href="/lists"
+                  className="insight-card p-4 bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl border border-orange-200/50 block hover:shadow-md transition-shadow"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-400 flex items-center justify-center">
+                      <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-text">Keyword Lists</p>
+                      <p className="text-xs text-text2">Organize, cluster & manage keywords</p>
                     </div>
                     <svg className="w-4 h-4 text-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

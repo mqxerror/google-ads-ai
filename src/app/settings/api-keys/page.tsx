@@ -19,6 +19,14 @@ interface ApiKeyConfig {
   features: string[];
 }
 
+// Available Anthropic models for ad generation
+const ANTHROPIC_MODELS = [
+  { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5', description: 'Most capable, best quality output', tier: 'premium' },
+  { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', description: 'Balanced performance and speed', tier: 'standard' },
+  { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', description: 'Fast and cost-effective', tier: 'standard' },
+  { id: 'claude-3-haiku-20240307', name: 'Claude 3 Haiku', description: 'Fastest, lowest cost', tier: 'budget' },
+] as const;
+
 const API_CONFIGS: ApiKeyConfig[] = [
   {
     id: 'moz',
@@ -97,6 +105,7 @@ export default function ApiKeysSettingsPage() {
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [testingApi, setTestingApi] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ api: string; success: boolean; message: string } | null>(null);
+  const [selectedAnthropicModel, setSelectedAnthropicModel] = useState('claude-sonnet-4-20250514');
 
   const isAuthenticated = status === 'authenticated' && session?.user;
 
@@ -114,11 +123,41 @@ export default function ApiKeysSettingsPage() {
       const data = await res.json();
       if (data.keys) {
         setApiKeys(data.keys);
+        // Load saved model preference
+        if (data.keys.anthropic_model) {
+          setSelectedAnthropicModel(data.keys.anthropic_model);
+        }
       }
     } catch (error) {
       console.error('Error loading API keys:', error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function saveAnthropicModel(modelId: string) {
+    setSaving('anthropic-model');
+    setSavedMessage(null);
+    setSelectedAnthropicModel(modelId);
+
+    try {
+      const res = await fetch('/api/settings/api-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'anthropic_model', value: modelId }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        setApiKeys(prev => ({ ...prev, anthropic_model: modelId }));
+        const modelName = ANTHROPIC_MODELS.find(m => m.id === modelId)?.name || modelId;
+        setSavedMessage(`Model changed to ${modelName}`);
+        setTimeout(() => setSavedMessage(null), 3000);
+      }
+    } catch (error) {
+      console.error('Error saving model preference:', error);
+    } finally {
+      setSaving(null);
     }
   }
 
@@ -243,6 +282,68 @@ export default function ApiKeysSettingsPage() {
                     Keys are encrypted and stored in your account. They are never exposed in the browser after saving.
                   </p>
                 </div>
+              </div>
+            </div>
+
+            {/* AI Model Preferences */}
+            <div className="card">
+              <div className="p-6 border-b border-divider">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">🎯</span>
+                  <div>
+                    <h3 className="font-semibold text-text">AI Model Preferences</h3>
+                    <p className="text-sm text-text2">Choose the AI model for ad generation</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6">
+                <label className="block text-sm font-medium text-text mb-3">
+                  Anthropic Claude Model for Ad Generation
+                </label>
+                <div className="space-y-2">
+                  {ANTHROPIC_MODELS.map(model => (
+                    <label
+                      key={model.id}
+                      className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                        selectedAnthropicModel === model.id
+                          ? 'border-accent bg-accent/5'
+                          : 'border-divider hover:border-accent/50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="anthropic-model"
+                        value={model.id}
+                        checked={selectedAnthropicModel === model.id}
+                        onChange={() => saveAnthropicModel(model.id)}
+                        className="w-4 h-4 text-accent focus:ring-accent"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-text">{model.name}</span>
+                          {model.tier === 'premium' && (
+                            <span className="px-1.5 py-0.5 bg-warning/20 text-warning text-[10px] font-medium rounded">
+                              PREMIUM
+                            </span>
+                          )}
+                          {model.tier === 'budget' && (
+                            <span className="px-1.5 py-0.5 bg-success/20 text-success text-[10px] font-medium rounded">
+                              BUDGET
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-text3 mt-0.5">{model.description}</p>
+                      </div>
+                      {saving === 'anthropic-model' && selectedAnthropicModel === model.id && (
+                        <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                      )}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-text3 mt-3">
+                  Higher-tier models produce better quality ad copy but cost more per request.
+                </p>
               </div>
             </div>
 

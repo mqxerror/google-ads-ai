@@ -15,8 +15,9 @@
  */
 
 // Rate limiting: Minimum time between syncs (in milliseconds)
-const MIN_SYNC_INTERVAL_AUTO = 24 * 60 * 60 * 1000; // 24 hours for auto
-const MIN_SYNC_INTERVAL_MANUAL = 60 * 60 * 1000; // 1 hour for manual
+// TODO: Re-enable rate limits for production
+const MIN_SYNC_INTERVAL_AUTO = 0; // Disabled for development
+const MIN_SYNC_INTERVAL_MANUAL = 0; // Disabled for development - sync anytime
 
 import { Pool, PoolClient } from 'pg';
 import { fetchCampaigns, fetchAdGroups, listAccessibleAccounts, listMCCClientAccounts } from './google-ads';

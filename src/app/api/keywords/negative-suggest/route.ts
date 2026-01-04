@@ -65,6 +65,12 @@ interface NegativeSuggestion {
   campaignName?: string;
   adGroupId?: string;
   adGroupName?: string;
+  // KPI metrics
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  cpc: number;
+  conversions: number;
   // Traceability fields
   analysisMethod: 'rule' | 'embedding' | 'claude' | 'deepseek' | 'moz';
   analysisCost: number; // Cost in USD for this analysis
@@ -219,6 +225,8 @@ export async function POST(request: NextRequest) {
       }
 
       if (reason) {
+        const clicks = waster.clicks || 0;
+        const impressions = waster.impressions || 0;
         suggestions.push({
           searchTerm: waster.searchTerm,
           reason,
@@ -231,6 +239,13 @@ export async function POST(request: NextRequest) {
           campaignName: waster.campaignName,
           adGroupId: waster.adGroupId,
           adGroupName: waster.adGroupName,
+          // KPI metrics
+          clicks,
+          impressions,
+          ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+          cpc: clicks > 0 ? waster.cost / clicks : 0,
+          conversions: waster.conversions || 0,
+          // Traceability
           analysisMethod,
           analysisCost,
         });

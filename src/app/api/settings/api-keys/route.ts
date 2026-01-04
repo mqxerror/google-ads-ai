@@ -23,6 +23,38 @@ function maskKey(key: string): string {
   return key.slice(0, 4) + '•'.repeat(Math.min(key.length - 8, 20)) + key.slice(-4);
 }
 
+// Export helper to get raw (decrypted) setting value - for internal use
+export async function getUserSetting(userEmail: string, key: string): Promise<string | null> {
+  try {
+    const supabase = getSupabaseClient();
+    const { data: settings } = await supabase
+      .from('user_settings')
+      .select('api_keys')
+      .eq('user_email', userEmail)
+      .single();
+
+    if (settings?.api_keys) {
+      const stored = settings.api_keys as Record<string, string>;
+      if (stored[key]) {
+        // anthropic_model is stored as plain text (not encrypted)
+        if (key === 'anthropic_model') {
+          return decryptKey(stored[key]);
+        }
+        return decryptKey(stored[key]);
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Get Anthropic model preference for a user
+export async function getAnthropicModel(userEmail: string): Promise<string> {
+  const model = await getUserSetting(userEmail, 'anthropic_model');
+  return model || 'claude-sonnet-4-20250514'; // Default to Sonnet 4
+}
+
 export async function GET(request: NextRequest) {
   try {
     const session = await auth();

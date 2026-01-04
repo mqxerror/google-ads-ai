@@ -6,12 +6,25 @@
 // API Response Types
 // =====================================================
 
+export interface MonthlySearchVolume {
+  year: number;
+  month: number;
+  volume: number;
+}
+
 export interface GoogleAdsKeywordMetrics {
   keyword: string;
   monthlySearchVolume: number;
   avgCpcMicros: number;
+  lowBidMicros: number;
+  highBidMicros: number;
   competition: 'LOW' | 'MEDIUM' | 'HIGH';
-  competitionIndex: number; // 0-1
+  competitionIndex: number; // 0-100
+  // NEW: Monthly volumes for sparkline
+  monthlySearchVolumes: MonthlySearchVolume[];
+  // NEW: Calculated trend metrics
+  threeMonthChange: number | null; // Percentage change over 3 months
+  yearOverYearChange: number | null; // YoY percentage change
 }
 
 export interface MozKeywordMetrics {
@@ -63,6 +76,14 @@ export interface EnrichedKeyword {
     dataSource: 'google_ads' | 'moz' | 'dataforseo' | 'cached' | 'unavailable';
     lastUpdated: string;
     cacheAge: number; // days
+    // NEW: Bid ranges from Google Ads
+    lowBidMicros?: number | null;
+    highBidMicros?: number | null;
+    // NEW: Monthly volumes for trend sparkline
+    monthlySearchVolumes?: MonthlySearchVolume[] | null;
+    // NEW: Calculated trend metrics
+    threeMonthChange?: number | null; // Percentage change over 3 months
+    yearOverYearChange?: number | null; // YoY percentage change
   } | null;
   opportunityScore?: number; // 0-100
 }

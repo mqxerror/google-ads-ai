@@ -1,3 +1,9 @@
+export interface MonthlySearchVolume {
+  year: number;
+  month: number;
+  volume: number;
+}
+
 export interface GeneratedKeyword {
   keyword: string;
   type: 'seed' | 'variation' | 'synonym' | 'modifier' | 'long_tail';
@@ -15,6 +21,15 @@ export interface GeneratedKeyword {
     dataSource: 'google_ads' | 'moz' | 'dataforseo' | 'cached' | 'unavailable';
     lastUpdated: string;
     cacheAge: number;
+    // NEW: Enhanced metrics from Google Ads
+    lowBidMicros?: number;
+    highBidMicros?: number;
+    monthlySearchVolumes?: MonthlySearchVolume[];
+    threeMonthChange?: number | null;
+    yearOverYearChange?: number | null;
+    // NEW: Intent source
+    intentSource?: 'dataforseo' | 'ollama' | 'rules' | 'embeddings';
+    intentConfidence?: number;
   };
   opportunityScore?: number;
   googleApisData?: {

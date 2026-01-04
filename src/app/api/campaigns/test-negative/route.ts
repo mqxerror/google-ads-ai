@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createGoogleAdsClient, getCustomer } from '@/lib/google-ads';
-import { getSession } from '@/lib/auth';
+import { auth } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -12,9 +12,9 @@ export const maxDuration = 30;
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await auth();
 
-    if (!session?.user?.id || !session?.accessToken) {
+    if (!session?.user || (!session?.accessToken && !session?.refreshToken)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -34,8 +34,8 @@ export async function POST(request: NextRequest) {
     }
 
     const client = createGoogleAdsClient();
-    const loginCustomerId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
-    const customer = getCustomer(client, customerId, session.accessToken, loginCustomerId);
+    const loginCustomerId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || '';
+    const customer = getCustomer(client, customerId, session.accessToken || '', loginCustomerId);
 
     const campaignResourceName = `customers/${customerId}/campaigns/${campaignId}`;
 

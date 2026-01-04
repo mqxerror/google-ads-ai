@@ -345,3 +345,148 @@ export async function updateSearchTermEmbedding(searchTermId: string, embedding:
     throw new Error(`Failed to update search term embedding: ${error.message}`);
   }
 }
+
+// =============================================================================
+// KEYWORD SEARCH HISTORY
+// =============================================================================
+
+export interface KeywordSearchHistory {
+  id: string;
+  user_id: string;
+  customer_id: string | null;
+  seed_keywords: string[];
+  target_location: string;
+  language: string;
+  options: Record<string, unknown>;
+  total_keywords_generated: number;
+  keywords_enriched: number;
+  clusters_created: number;
+  intent_source: 'ollama' | 'embeddings' | 'rules' | null;
+  ollama_classified: number;
+  embeddings_classified: number;
+  rules_classified: number;
+  by_type: Record<string, number>;
+  by_intent: Record<string, number>;
+  by_match_type: Record<string, number>;
+  by_source: Record<string, number>;
+  keywords: unknown[];
+  negative_keywords: unknown[];
+  clusters: unknown[];
+  enrichment_stats: Record<string, unknown>;
+  processing_time_ms: number | null;
+  created_at: string;
+}
+
+/**
+ * Save a keyword search to history for later analysis
+ */
+export async function saveKeywordSearchHistory(
+  data: Omit<KeywordSearchHistory, 'id' | 'created_at'>
+): Promise<KeywordSearchHistory | null> {
+  try {
+    const client = getSupabaseClient();
+
+    const { data: result, error } = await client
+      .from('keyword_search_history')
+      .insert(data)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[Supabase] Failed to save keyword search history:', error.message);
+      return null;
+    }
+
+    return result;
+  } catch (err) {
+    console.error('[Supabase] Error saving keyword search history:', err);
+    return null;
+  }
+}
+
+/**
+ * Get keyword search history for a user
+ */
+export async function getKeywordSearchHistory(
+  userId: string,
+  limit: number = 50
+): Promise<KeywordSearchHistory[]> {
+  try {
+    const client = getSupabaseClient();
+
+    const { data, error } = await client
+      .from('keyword_search_history')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.error('[Supabase] Failed to get keyword search history:', error.message);
+      return [];
+    }
+
+    return data || [];
+  } catch (err) {
+    console.error('[Supabase] Error getting keyword search history:', err);
+    return [];
+  }
+}
+
+/**
+ * Get aggregate statistics for a user's keyword searches
+ */
+export async function getKeywordSearchStats(userId: string): Promise<{
+  totalSearches: number;
+  totalKeywordsGenerated: number;
+  topLocations: { location: string; count: number }[];
+  topSeedKeywords: { keyword: string; count: number }[];
+} | null> {
+  try {
+    const client = getSupabaseClient();
+
+    const { data, error } = await client
+      .from('keyword_search_history')
+      .select('seed_keywords, target_location, total_keywords_generated')
+      .eq('user_id', userId);
+
+    if (error || !data) {
+      return null;
+    }
+
+    // Calculate stats
+    const locationCounts: Record<string, number> = {};
+    const seedKeywordCounts: Record<string, number> = {};
+    let totalKeywords = 0;
+
+    data.forEach(row => {
+      // Count locations
+      const loc = row.target_location || 'US';
+      locationCounts[loc] = (locationCounts[loc] || 0) + 1;
+
+      // Count seed keywords
+      (row.seed_keywords || []).forEach((kw: string) => {
+        seedKeywordCounts[kw] = (seedKeywordCounts[kw] || 0) + 1;
+      });
+
+      // Sum keywords
+      totalKeywords += row.total_keywords_generated || 0;
+    });
+
+    return {
+      totalSearches: data.length,
+      totalKeywordsGenerated: totalKeywords,
+      topLocations: Object.entries(locationCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([location, count]) => ({ location, count })),
+      topSeedKeywords: Object.entries(seedKeywordCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([keyword, count]) => ({ keyword, count })),
+    };
+  } catch (err) {
+    console.error('[Supabase] Error getting keyword search stats:', err);
+    return null;
+  }
+}

@@ -1,6 +1,8 @@
 'use client';
 
 import { GeneratedKeyword } from '../types';
+import TrendSparkline from './TrendSparkline';
+import DataSourceBadge from './DataSourceBadge';
 
 interface KeywordTableProps {
   keywords: GeneratedKeyword[];
@@ -81,7 +83,11 @@ export default function KeywordTable({
                       </span>
                     </div>
                   </th>
-                  <th className="p-3 text-right text-sm font-medium text-text2">CPC</th>
+                  <th className="p-3 text-center text-sm font-medium text-text2" title="12-month search volume trend">Trend</th>
+                  <th className="p-3 text-right text-sm font-medium text-text2" title="3-month change">3M%</th>
+                  <th className="p-3 text-right text-sm font-medium text-text2" title="Year-over-year change">YoY%</th>
+                  <th className="p-3 text-right text-sm font-medium text-text2" title="Low bid estimate">Low Bid</th>
+                  <th className="p-3 text-right text-sm font-medium text-text2" title="High bid estimate">High Bid</th>
                   <th className="p-3 text-center text-sm font-medium text-text2">Comp.</th>
                   <th className="p-3 text-right text-sm font-medium text-text2">Score</th>
                 </>
@@ -172,13 +178,59 @@ export default function KeywordTable({
                         <span className="text-text3 text-xs">—</span>
                       )}
                     </td>
-                    <td className="p-3 text-right">
-                      {kw.metrics?.cpc !== null && kw.metrics?.cpc !== undefined ? (
-                        <span className="text-text font-medium">${kw.metrics.cpc.toFixed(2)}</span>
+                    {/* Trend Sparkline */}
+                    <td className="p-3 text-center">
+                      {kw.metrics?.monthlySearchVolumes && kw.metrics.monthlySearchVolumes.length > 0 ? (
+                        <TrendSparkline data={kw.metrics.monthlySearchVolumes} width={60} height={20} />
                       ) : (
                         <span className="text-text3 text-xs">—</span>
                       )}
                     </td>
+                    {/* 3-Month Change */}
+                    <td className="p-3 text-right">
+                      {kw.metrics?.threeMonthChange !== null && kw.metrics?.threeMonthChange !== undefined ? (
+                        <span className={`text-sm font-medium ${
+                          kw.metrics.threeMonthChange > 0 ? 'text-emerald-600' :
+                          kw.metrics.threeMonthChange < 0 ? 'text-red-500' :
+                          'text-text3'
+                        }`}>
+                          {kw.metrics.threeMonthChange > 0 ? '+' : ''}{kw.metrics.threeMonthChange.toFixed(0)}%
+                        </span>
+                      ) : (
+                        <span className="text-text3 text-xs">—</span>
+                      )}
+                    </td>
+                    {/* Year-over-Year Change */}
+                    <td className="p-3 text-right">
+                      {kw.metrics?.yearOverYearChange !== null && kw.metrics?.yearOverYearChange !== undefined ? (
+                        <span className={`text-sm font-medium ${
+                          kw.metrics.yearOverYearChange > 0 ? 'text-emerald-600' :
+                          kw.metrics.yearOverYearChange < 0 ? 'text-red-500' :
+                          'text-text3'
+                        }`}>
+                          {kw.metrics.yearOverYearChange > 0 ? '+' : ''}{kw.metrics.yearOverYearChange.toFixed(0)}%
+                        </span>
+                      ) : (
+                        <span className="text-text3 text-xs">—</span>
+                      )}
+                    </td>
+                    {/* Low Bid */}
+                    <td className="p-3 text-right">
+                      {kw.metrics?.lowBidMicros !== null && kw.metrics?.lowBidMicros !== undefined ? (
+                        <span className="text-text text-sm">${(kw.metrics.lowBidMicros / 1000000).toFixed(2)}</span>
+                      ) : (
+                        <span className="text-text3 text-xs">—</span>
+                      )}
+                    </td>
+                    {/* High Bid */}
+                    <td className="p-3 text-right">
+                      {kw.metrics?.highBidMicros !== null && kw.metrics?.highBidMicros !== undefined ? (
+                        <span className="text-text text-sm">${(kw.metrics.highBidMicros / 1000000).toFixed(2)}</span>
+                      ) : (
+                        <span className="text-text3 text-xs">—</span>
+                      )}
+                    </td>
+                    {/* Competition */}
                     <td className="p-3 text-center">
                       {kw.metrics?.competition ? (
                         <span className={`px-2 py-0.5 rounded text-xs font-medium ${
@@ -192,6 +244,7 @@ export default function KeywordTable({
                         <span className="text-text3 text-xs">—</span>
                       )}
                     </td>
+                    {/* Opportunity Score */}
                     <td className="p-3 text-right">
                       {kw.opportunityScore !== undefined ? (
                         <div className="flex items-center justify-end gap-2">

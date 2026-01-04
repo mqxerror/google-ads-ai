@@ -12,6 +12,9 @@ import { auth } from '@/lib/auth';
 import { enrichKeywordsWithMetrics } from '@/lib/keyword-data';
 import { estimateCost, checkQuotaAvailability } from '@/lib/keyword-data/quota-tracker';
 import { enrichmentLogger } from '@/lib/enrichment-logger';
+import { classifySearchIntent, type SearchIntent } from '@/lib/ollama/intent-classifier';
+import { saveKeywordSearchHistory } from '@/lib/supabase';
+import { generateKeywordIdeasFromSeeds } from '@/lib/google-ads';
 
 // Location code to Google Ads geoTargetConstant mapping
 const LOCATION_GEO_CODES: Record<string, string> = {
@@ -67,6 +70,14 @@ interface GeneratedKeyword {
     dataSource: 'google_ads' | 'moz' | 'dataforseo' | 'cached' | 'unavailable';
     lastUpdated: string;
     cacheAge: number;
+    // NEW: Bid ranges from Google Ads
+    lowBidMicros?: number | null;
+    highBidMicros?: number | null;
+    // NEW: Monthly volumes for trend sparkline
+    monthlySearchVolumes?: Array<{ year: number; month: number; volume: number }> | null;
+    // NEW: Calculated trend metrics
+    threeMonthChange?: number | null;
+    yearOverYearChange?: number | null;
   };
   opportunityScore?: number;
   googleApisData?: {
@@ -475,9 +486,69 @@ export async function POST(request: NextRequest) {
       new Map(allKeywords.map(k => [k.keyword, k])).values()
     );
 
-    // NEW: Expand with Google Autocomplete suggestions
-    if (doVariations || doSynonyms) {
-      console.log('[Keyword Factory] Fetching Google Autocomplete suggestions for seed keywords...');
+    // PRIMARY SOURCE: Google Ads Keyword Planner (like the official tool)
+    // This returns keyword suggestions WITH volume data already included
+    let googleAdsKeywordCount = 0;
+
+    if (session?.refreshToken && session?.customerId) {
+      console.log('[Keyword Factory] Using Google Ads Keyword Planner for keyword generation...');
+
+      try {
+        const locationCode = options.targetLocation || 'US';
+        const geoTargetCode = LOCATION_GEO_CODES[locationCode] || '2840';
+        const loginCustomerId = (session as any).loginCustomerId || process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+
+        const keywordIdeas = await generateKeywordIdeasFromSeeds(
+          session.refreshToken,
+          session.customerId,
+          seedKeywords,
+          loginCustomerId,
+          geoTargetCode,
+          500 // Get up to 500 keyword ideas
+        );
+
+        console.log(`[Keyword Factory] Google Ads returned ${keywordIdeas.length} keyword ideas`);
+
+        // Add keyword ideas with their metrics
+        for (const idea of keywordIdeas) {
+          // Don't add if already exists
+          if (!uniqueKeywords.some(k => k.keyword.toLowerCase() === idea.keyword.toLowerCase())) {
+            uniqueKeywords.push({
+              keyword: idea.keyword,
+              type: 'variation',
+              source: 'google_ads_planner',
+              suggestedMatchType: suggestMatchType(idea.keyword),
+              estimatedIntent: estimateIntent(idea.keyword),
+              metrics: {
+                searchVolume: idea.monthlySearchVolume,
+                cpc: idea.avgCpcMicros / 1_000_000,
+                competition: idea.competition,
+                difficulty: null,
+                organicCtr: null,
+                dataSource: 'google_ads',
+                lastUpdated: new Date().toISOString(),
+                cacheAge: 0,
+                lowBidMicros: idea.lowBidMicros,
+                highBidMicros: idea.highBidMicros,
+                monthlySearchVolumes: idea.monthlySearchVolumes,
+                threeMonthChange: idea.threeMonthChange,
+                yearOverYearChange: idea.yearOverYearChange,
+              },
+            });
+            googleAdsKeywordCount++;
+          }
+        }
+
+        console.log(`[Keyword Factory] Added ${googleAdsKeywordCount} keywords from Google Ads Keyword Planner`);
+      } catch (error) {
+        console.error('[Keyword Factory] Google Ads Keyword Planner error:', error);
+        // Continue with autocomplete fallback
+      }
+    }
+
+    // FALLBACK: Google Autocomplete (if Google Ads didn't return enough)
+    if (googleAdsKeywordCount < 50 && (doVariations || doSynonyms)) {
+      console.log('[Keyword Factory] Supplementing with Google Autocomplete suggestions...');
 
       try {
         const { getExpandedAutocompleteSuggestions, cleanSuggestions } = await import('@/lib/google-apis/autocomplete');
@@ -518,6 +589,18 @@ export async function POST(request: NextRequest) {
         // Continue without autocomplete rather than failing
       }
     }
+
+    // SKIP SLOW INTENT CLASSIFICATION ON INITIAL GENERATION
+    // Intent classification is now ON-DEMAND via /api/keywords/classify-intent
+    // Keywords already have basic intent from estimateIntent() function
+    const intentClassificationStats = {
+      ollamaClassified: 0,
+      embeddingsClassified: 0,
+      rulesClassified: 0,
+      source: 'rules' as 'ollama' | 'embeddings' | 'rules',
+    };
+
+    console.log(`[Keyword Factory] Skipping slow intent classification (use on-demand API instead)`);
 
     // NEW: Enrich keywords with real metrics if requested
     let enrichmentStats = {
@@ -776,6 +859,13 @@ export async function POST(request: NextRequest) {
       },
       negativesSuggested: negativeKeywords.length,
       clusters: clusters.length,
+      // NEW: Intent classification stats
+      intentClassification: {
+        source: intentClassificationStats.source,
+        ollamaClassified: intentClassificationStats.ollamaClassified,
+        embeddingsClassified: intentClassificationStats.embeddingsClassified,
+        rulesClassified: intentClassificationStats.rulesClassified,
+      },
       // NEW: Enrichment stats
       enrichment: enrichWithMetrics ? enrichmentStats : null,
     };
@@ -785,6 +875,34 @@ export async function POST(request: NextRequest) {
     if (enrichWithMetrics) {
       console.log(`[Keyword Factory] Enrichment: ${enrichmentStats.enriched} enriched, ${enrichmentStats.cached} cached, $${enrichmentStats.estimatedCost.toFixed(2)} estimated cost`);
     }
+
+    // NEW: Save keyword search to history for analysis (non-blocking)
+    saveKeywordSearchHistory({
+      user_id: session.user.id || session.user.email || 'anonymous',
+      customer_id: (session as any).customerId || null,
+      seed_keywords: seedKeywords,
+      target_location: options.targetLocation || 'US',
+      language: options.language || 'en',
+      options: options as Record<string, unknown>,
+      total_keywords_generated: stats.totalGenerated,
+      keywords_enriched: enrichmentStats.enriched,
+      clusters_created: stats.clusters,
+      intent_source: intentClassificationStats.source,
+      ollama_classified: intentClassificationStats.ollamaClassified,
+      embeddings_classified: intentClassificationStats.embeddingsClassified,
+      rules_classified: intentClassificationStats.rulesClassified,
+      by_type: stats.byType,
+      by_intent: stats.byIntent,
+      by_match_type: stats.byMatchType,
+      by_source: stats.bySource || {},
+      keywords: uniqueKeywords,
+      negative_keywords: negativeKeywords,
+      clusters: clusters,
+      enrichment_stats: enrichmentStats as Record<string, unknown>,
+      processing_time_ms: null, // Could add timing if needed
+    }).catch(err => {
+      console.error('[Keyword Factory] Failed to save search history:', err);
+    });
 
     return NextResponse.json({
       success: true,

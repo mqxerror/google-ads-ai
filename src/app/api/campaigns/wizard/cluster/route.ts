@@ -3,12 +3,50 @@ import { generateEmbeddings, kMeansClustering } from '@/lib/embeddings';
 import { GeneratedKeyword } from '@/app/keyword-factory/types';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 30; // Reduced from 60s to prevent long hangs
 
 interface ClusterRequest {
   keywords: GeneratedKeyword[];
+  clusterMethod?: 'meaning' | 'similarity';
+  sensitivity?: number;
   minClusterSize?: number;
   maxClusters?: number;
+}
+
+// Simple fallback clustering when AI embeddings fail
+async function simpleFallbackClustering(keywords: GeneratedKeyword[]): Promise<any[]> {
+  // Group keywords by first word (simple but fast)
+  const groups = new Map<string, GeneratedKeyword[]>();
+
+  keywords.forEach(kw => {
+    const firstWord = kw.keyword.split(' ')[0].toLowerCase();
+    if (!groups.has(firstWord)) {
+      groups.set(firstWord, []);
+    }
+    groups.get(firstWord)!.push(kw);
+  });
+
+  // Convert to ad groups
+  const adGroups = Array.from(groups.entries())
+    .filter(([_, kws]) => kws.length >= 2) // At least 2 keywords per group
+    .map(([word, kws]) => ({
+      name: `${word.charAt(0).toUpperCase()}${word.slice(1)} Keywords`,
+      keywords: kws,
+    }));
+
+  // If we have single keywords, group them together
+  const singleKeywords = Array.from(groups.entries())
+    .filter(([_, kws]) => kws.length === 1)
+    .flatMap(([_, kws]) => kws);
+
+  if (singleKeywords.length > 0) {
+    adGroups.push({
+      name: 'Other Keywords',
+      keywords: singleKeywords,
+    });
+  }
+
+  return adGroups;
 }
 
 // Generate ad group name from cluster keywords
@@ -49,7 +87,15 @@ export async function POST(request: NextRequest) {
   try {
     const body: ClusterRequest = await request.json();
 
-    const { keywords, minClusterSize = 3, maxClusters = 7 } = body;
+    const {
+      keywords,
+      clusterMethod = 'similarity',
+      sensitivity = 0.2,
+      minClusterSize = 3,
+      maxClusters = 7
+    } = body;
+
+    console.log(`[Cluster API] Settings - Method: ${clusterMethod}, Sensitivity: ${sensitivity}, Min Size: ${minClusterSize}, Max Clusters: ${maxClusters}`);
 
     if (!keywords || keywords.length === 0) {
       return NextResponse.json(
@@ -62,19 +108,45 @@ export async function POST(request: NextRequest) {
     const keywordTexts = keywords.map((kw) => kw.keyword);
     console.log(`[Cluster API] Generating embeddings for ${keywordTexts.length} keywords...`);
 
-    const embeddings = await generateEmbeddings(keywordTexts);
+    let embeddings: number[][];
+    let usedFallback = false;
 
-    // Determine optimal number of clusters
+    try {
+      embeddings = await generateEmbeddings(keywordTexts);
+    } catch (error) {
+      console.error('[Cluster API] Embeddings failed, using fallback clustering:', error);
+
+      // USE FALLBACK
+      const adGroups = await simpleFallbackClustering(keywords);
+
+      return NextResponse.json({
+        adGroups,
+        clustersCount: adGroups.length,
+        totalKeywords: keywords.length,
+        fallback: true, // Flag for UI
+      });
+    }
+
+    // Use maxClusters as the target number of ad groups
+    // Sensitivity affects the clustering algorithm's tolerance, not the count
     const numKeywords = keywords.length;
-    let k = Math.min(maxClusters, Math.max(2, Math.ceil(numKeywords / minClusterSize)));
+
+    // Ensure we don't request more clusters than we have keywords
+    let k = Math.min(maxClusters, Math.max(1, numKeywords));
+
+    // If we have very few keywords, adjust
+    if (numKeywords < maxClusters) {
+      k = Math.max(1, Math.floor(numKeywords / 2)); // At least 2 keywords per group when possible
+    }
+
+    console.log(`[Cluster API] Target clusters: ${k} (from ${numKeywords} keywords, user requested ${maxClusters})`);
 
     // Cluster keywords using k-means
     console.log(`[Cluster API] Clustering into ${k} groups...`);
     const clusters = kMeansClustering(embeddings, k, 100);
 
-    // Map clusters to ad groups
+    // Map clusters to ad groups - DON'T filter out small clusters
     const adGroups = clusters
-      .filter((cluster) => cluster.items.length >= Math.max(2, minClusterSize - 1)) // Allow slightly smaller clusters
       .map((cluster) => {
         // Get keywords for this cluster
         const clusterKeywords = cluster.items.map((item) => keywords[item.index]);
@@ -86,30 +158,10 @@ export async function POST(request: NextRequest) {
           name,
           keywords: clusterKeywords,
         };
-      });
+      })
+      .filter((group) => group.keywords.length > 0); // Only filter out completely empty groups
 
-    // If we have too few ad groups, merge smallest ones
-    if (adGroups.length < 2 && keywords.length > 5) {
-      // Fallback: create 2-3 balanced groups
-      const groupSize = Math.ceil(keywords.length / 3);
-      const fallbackGroups = [];
-
-      for (let i = 0; i < keywords.length; i += groupSize) {
-        const groupKeywords = keywords.slice(i, i + groupSize);
-        fallbackGroups.push({
-          name: generateAdGroupName(groupKeywords),
-          keywords: groupKeywords,
-        });
-      }
-
-      return NextResponse.json({
-        adGroups: fallbackGroups,
-        clustersCount: fallbackGroups.length,
-        totalKeywords: keywords.length,
-      });
-    }
-
-    console.log(`[Cluster API] Created ${adGroups.length} ad groups`);
+    console.log(`[Cluster API] Created ${adGroups.length} ad groups (user requested ${maxClusters})`);
 
     return NextResponse.json({
       adGroups,

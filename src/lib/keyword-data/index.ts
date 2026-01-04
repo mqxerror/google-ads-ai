@@ -478,6 +478,14 @@ function mergeGoogleAdsMetrics(
   existing.metrics.competition = googleMetric.competition;
   existing.metrics.dataSource = 'google_ads';
   existing.metrics.lastUpdated = new Date().toISOString();
+  // NEW: Pass bid ranges
+  existing.metrics.lowBidMicros = googleMetric.lowBidMicros;
+  existing.metrics.highBidMicros = googleMetric.highBidMicros;
+  // NEW: Pass monthly volumes for trend sparkline
+  existing.metrics.monthlySearchVolumes = googleMetric.monthlySearchVolumes;
+  // NEW: Pass calculated trend metrics
+  existing.metrics.threeMonthChange = googleMetric.threeMonthChange;
+  existing.metrics.yearOverYearChange = googleMetric.yearOverYearChange;
 }
 
 /**

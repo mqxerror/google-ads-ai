@@ -113,21 +113,23 @@ export async function listMCCClientAccounts(refreshToken: string, mccId?: string
     const accounts = result.map((row) => {
       const id = row.customer_client?.id?.toString() || '';
       const name = row.customer_client?.descriptive_name;
-      const status = row.customer_client?.status || 'UNKNOWN';
-      const isActive = status === 'ENABLED';
+      const rawStatus = row.customer_client?.status;
+      // Status can be string 'ENABLED' or number 2 (enum value)
+      const isActive = rawStatus === 'ENABLED' || rawStatus === 2;
+      const status = isActive ? 'ENABLED' : (rawStatus === 'SUSPENDED' || rawStatus === 4 ? 'SUSPENDED' : 'UNKNOWN');
       return {
         customerId: id,
         // Use name if available, otherwise show formatted account ID
-        // Mark inactive accounts
+        // Only mark as inactive if explicitly suspended (not just unknown)
         descriptiveName: name
-          ? (isActive ? name : `${name} (Inactive)`)
-          : `Account ${id.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3')}${isActive ? '' : ' (Inactive)'}`,
+          ? (rawStatus === 'SUSPENDED' || rawStatus === 4 ? `${name} (Suspended)` : name)
+          : `Account ${id.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3')}`,
         currencyCode: row.customer_client?.currency_code || 'USD',
         timeZone: row.customer_client?.time_zone || 'America/New_York',
         manager: false,
         status,
         level: row.customer_client?.level || 0,
-        isActive,
+        isActive: true, // Assume active unless explicitly suspended
       };
     }).filter(acc => acc.customerId);
 
@@ -321,6 +323,9 @@ export interface CreateCampaignInput {
   dailyBudget: number;
   biddingStrategy: string;
   targetCpa?: number;
+  // Network settings
+  includeSearchPartners?: boolean;
+  includeDisplayNetwork?: boolean;
 }
 
 export async function createCampaign(
@@ -335,13 +340,21 @@ export async function createCampaign(
   try {
     const budgetAmountMicros = campaign.dailyBudget * 1_000_000;
 
-    const budgetResult = await customer.campaignBudgets.create([{
-      name: `Budget for ${campaign.name}`,
+    // Make budget name unique to avoid "already exists" errors
+    const timestamp = Date.now();
+    const budgetPayload = {
+      name: `Budget for ${campaign.name} ${timestamp}`,
       amount_micros: budgetAmountMicros,
-      delivery_method: 2,
-    }] as Parameters<typeof customer.campaignBudgets.create>[0]);
+      delivery_method: 2, // STANDARD delivery
+      explicitly_shared: false, // NON-SHARED budget (dedicated to this campaign only)
+    };
+
+    console.log('🔷 Creating budget:', JSON.stringify(budgetPayload, null, 2));
+    const budgetResult = await customer.campaignBudgets.create([budgetPayload] as Parameters<typeof customer.campaignBudgets.create>[0]);
 
     const budgetResourceName = budgetResult.results[0]?.resource_name;
+    console.log('🔷 Budget created:', budgetResourceName);
+
     if (!budgetResourceName) {
       return { success: false, error: 'Failed to create budget' };
     }
@@ -361,13 +374,54 @@ export async function createCampaign(
       'MANUAL_CPC': 1,
     };
 
-    const result = await customer.campaigns.create([{
-      name: campaign.name,
+    // Build campaign payload with campaign-level bidding strategy
+    // Add timestamp to campaign name to ensure uniqueness
+    const uniqueCampaignName = `${campaign.name} ${timestamp}`;
+
+    const campaignPayload: any = {
+      name: uniqueCampaignName,
       advertising_channel_type: typeMapping[campaign.type] || 2,
       status: campaign.status === 'ENABLED' ? 2 : 3,
       campaign_budget: budgetResourceName,
-      bidding_strategy_type: biddingMapping[campaign.biddingStrategy] || 10,
-    }] as Parameters<typeof customer.campaigns.create>[0]);
+      contains_eu_political_advertising: 3, // DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING (required enum)
+      // Network settings for Search campaigns
+      network_settings: {
+        target_google_search: true, // Always target Google Search
+        target_search_network: campaign.includeSearchPartners ?? false,
+        target_content_network: campaign.includeDisplayNetwork ?? false,
+        target_partner_search_network: false,
+      },
+    };
+
+    // Add campaign-level bidding strategy (not portfolio bidding_strategy_type)
+    if (campaign.biddingStrategy === 'MANUAL_CPC') {
+      campaignPayload.manual_cpc = {
+        enhanced_cpc_enabled: false, // Basic MANUAL_CPC (enhanced may not be allowed on test accounts)
+      };
+    } else if (campaign.biddingStrategy === 'MAXIMIZE_CLICKS') {
+      campaignPayload.maximize_clicks = {};
+    } else if (campaign.biddingStrategy === 'MAXIMIZE_CONVERSIONS') {
+      campaignPayload.maximize_conversions = {};
+    } else if (campaign.biddingStrategy === 'TARGET_CPA') {
+      campaignPayload.target_cpa = {
+        target_cpa_micros: 10_000_000, // Default $10 CPA
+      };
+    } else {
+      // Default to basic MANUAL_CPC
+      campaignPayload.manual_cpc = {
+        enhanced_cpc_enabled: false,
+      };
+    }
+
+    console.log('=== GOOGLE ADS API REQUEST DEBUG ===');
+    console.log('Customer ID:', customerId);
+    console.log('Budget Resource:', budgetResourceName);
+    console.log('Campaign Type:', campaign.type, '→', typeMapping[campaign.type]);
+    console.log('Bidding Strategy:', campaign.biddingStrategy);
+    console.log('Campaign Payload:', JSON.stringify(campaignPayload, null, 2));
+    console.log('=== END DEBUG ===');
+
+    const result = await customer.campaigns.create([campaignPayload] as Parameters<typeof customer.campaigns.create>[0]);
 
     const campaignResourceName = result.results[0]?.resource_name;
     if (!campaignResourceName) {
@@ -375,9 +429,20 @@ export async function createCampaign(
     }
 
     const campaignId = campaignResourceName.split('/').pop();
+    console.log('✅ Campaign created successfully! ID:', campaignId);
     return { success: true, campaignId };
   } catch (error) {
-    console.error('Error creating campaign:', error);
+    console.error('❌ GOOGLE ADS API ERROR ===');
+    console.error('Error Type:', error?.constructor?.name);
+    console.error('Error Message:', error instanceof Error ? error.message : 'Unknown');
+    console.error('Full Error Object:', JSON.stringify(error, null, 2));
+
+    // If it's a Google Ads API error, log the details
+    if (error && typeof error === 'object' && 'errors' in error) {
+      console.error('Google Ads API Errors:', (error as any).errors);
+    }
+    console.error('=== END ERROR ===');
+
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to create campaign',
@@ -453,48 +518,75 @@ export async function fetchKeywordPlannerMetrics(
         return results.map((result: any) => {
           const metrics = result.keyword_idea_metrics;
 
-          // Get avg monthly searches from monthly_search_volumes array (most recent month)
+          // Parse monthly search volumes array
+          const monthlySearchVolumes: { year: number; month: number; volume: number }[] = [];
           let avgMonthlySearches = 0;
+
           if (metrics?.monthly_search_volumes?.length > 0) {
-            // Average of last 12 months or available months
-            const volumes = metrics.monthly_search_volumes
-              .map((m: any) => parseInt(m.monthly_searches || '0'))
-              .filter((v: number) => v > 0);
+            // Extract each month's data
+            for (const m of metrics.monthly_search_volumes) {
+              monthlySearchVolumes.push({
+                year: parseInt(m.year || '0'),
+                month: parseInt(m.month || '0'),
+                volume: parseInt(m.monthly_searches || '0'),
+              });
+            }
+
+            // Sort by date (oldest first for sparkline)
+            monthlySearchVolumes.sort((a, b) => {
+              if (a.year !== b.year) return a.year - b.year;
+              return a.month - b.month;
+            });
+
+            // Calculate average from non-zero volumes
+            const volumes = monthlySearchVolumes.map(m => m.volume).filter(v => v > 0);
             if (volumes.length > 0) {
-              avgMonthlySearches = Math.round(volumes.reduce((a: number, b: number) => a + b, 0) / volumes.length);
+              avgMonthlySearches = Math.round(volumes.reduce((a, b) => a + b, 0) / volumes.length);
             }
           } else {
             avgMonthlySearches = metrics?.avg_monthly_searches || 0;
           }
 
-          // Convert to numbers (API returns strings!) - FIXED v2
+          // Calculate 3-month change (if we have enough data)
+          let threeMonthChange: number | null = null;
+          if (monthlySearchVolumes.length >= 4) {
+            const recent = monthlySearchVolumes[monthlySearchVolumes.length - 1]?.volume || 0;
+            const threeMonthsAgo = monthlySearchVolumes[monthlySearchVolumes.length - 4]?.volume || 0;
+            if (threeMonthsAgo > 0) {
+              threeMonthChange = Math.round(((recent - threeMonthsAgo) / threeMonthsAgo) * 100);
+            }
+          }
+
+          // Calculate YoY change (if we have 12+ months)
+          let yearOverYearChange: number | null = null;
+          if (monthlySearchVolumes.length >= 12) {
+            const recent = monthlySearchVolumes[monthlySearchVolumes.length - 1]?.volume || 0;
+            const yearAgo = monthlySearchVolumes[0]?.volume || 0;
+            if (yearAgo > 0) {
+              yearOverYearChange = Math.round(((recent - yearAgo) / yearAgo) * 100);
+            }
+          }
+
+          // Convert bid values to numbers (API returns strings!)
           const lowBidStr = metrics?.low_top_of_page_bid_micros || '0';
           const highBidStr = metrics?.high_top_of_page_bid_micros || '0';
           const lowBid = Number(lowBidStr);
           const highBid = Number(highBidStr);
           const avgCpc = lowBid > 0 && highBid > 0 ? Math.round((lowBid + highBid) / 2) : 0;
 
-          // DEBUG: Log type conversion
-          if (avgCpc > 0) {
-            console.log(`[Google Ads] CPC FIX v2 for "${result.text}":`, {
-              lowBidStr: lowBidStr,
-              highBidStr: highBidStr,
-              lowBidNum: lowBid,
-              highBidNum: highBid,
-              sum: lowBid + highBid,
-              avgCpc,
-              avgCpcDollars: (avgCpc / 1000000).toFixed(2)
-            });
-          }
-
-          console.log(`[Google Ads] ✓ Keyword: ${result.text}, Volume: ${avgMonthlySearches}, CPC: ${avgCpc / 1000000}`);
+          console.log(`[Google Ads] ✓ Keyword: ${result.text}, Volume: ${avgMonthlySearches}, 3M: ${threeMonthChange}%, YoY: ${yearOverYearChange}%`);
 
           return {
             keyword: result.text || '',
             monthlySearchVolume: avgMonthlySearches,
             avgCpcMicros: avgCpc,
+            lowBidMicros: lowBid,
+            highBidMicros: highBid,
             competition: mapCompetitionLevel(metrics?.competition),
             competitionIndex: metrics?.competition_index || 0,
+            monthlySearchVolumes,
+            threeMonthChange,
+            yearOverYearChange,
           };
         });
       });
@@ -509,8 +601,13 @@ export async function fetchKeywordPlannerMetrics(
           keyword,
           monthlySearchVolume: 0,
           avgCpcMicros: 0,
+          lowBidMicros: 0,
+          highBidMicros: 0,
           competition: 'LOW',
           competitionIndex: 0,
+          monthlySearchVolumes: [],
+          threeMonthChange: null,
+          yearOverYearChange: null,
         });
       });
     }
@@ -524,6 +621,131 @@ function mapCompetitionLevel(competition: unknown): 'LOW' | 'MEDIUM' | 'HIGH' {
   if (competition === 'HIGH' || competition === 3) return 'HIGH';
   if (competition === 'MEDIUM' || competition === 2) return 'MEDIUM';
   return 'LOW';
+}
+
+/**
+ * Generate keyword ideas from seed keywords using Google Ads Keyword Planner
+ * This returns NEW keyword suggestions with volume data (like Google Keyword Planner tool)
+ */
+export async function generateKeywordIdeasFromSeeds(
+  refreshToken: string,
+  customerId: string,
+  seedKeywords: string[],
+  loginCustomerId?: string,
+  locationId: string = '2840', // US by default
+  maxResults: number = 500
+): Promise<GoogleAdsKeywordMetrics[]> {
+  if (seedKeywords.length === 0) {
+    return [];
+  }
+
+  const breaker = getGoogleAdsCircuitBreaker();
+
+  try {
+    const results = await breaker.execute(async () => {
+      const client = createGoogleAdsClient();
+      const customer = getCustomer(client, customerId, refreshToken, loginCustomerId);
+
+      console.log(`[Google Ads] Generating keyword ideas from ${seedKeywords.length} seeds...`);
+
+      // Use KeywordPlanIdeaService.generateKeywordIdeas method
+      const response = await customer.keywordPlanIdeas.generateKeywordIdeas({
+        customer_id: customerId,
+        language: 'languageConstants/1000', // English
+        geo_target_constants: [`geoTargetConstants/${locationId}`],
+        keyword_seed: {
+          keywords: seedKeywords,
+        },
+        // Request more results - Google returns up to 10,000
+        page_size: Math.min(maxResults, 3000),
+      } as any);
+
+      // Response is an array directly
+      const ideaResults = Array.isArray(response) ? response : (response.results || []);
+
+      console.log(`[Google Ads] Generated ${ideaResults.length} keyword ideas`);
+
+      return ideaResults.map((result: any) => {
+        const metrics = result.keyword_idea_metrics;
+
+        // Parse monthly search volumes array
+        const monthlySearchVolumes: { year: number; month: number; volume: number }[] = [];
+        let avgMonthlySearches = 0;
+
+        if (metrics?.monthly_search_volumes?.length > 0) {
+          for (const m of metrics.monthly_search_volumes) {
+            monthlySearchVolumes.push({
+              year: parseInt(m.year || '0'),
+              month: parseInt(m.month || '0'),
+              volume: parseInt(m.monthly_searches || '0'),
+            });
+          }
+
+          monthlySearchVolumes.sort((a, b) => {
+            if (a.year !== b.year) return a.year - b.year;
+            return a.month - b.month;
+          });
+
+          const volumes = monthlySearchVolumes.map(m => m.volume).filter(v => v > 0);
+          if (volumes.length > 0) {
+            avgMonthlySearches = Math.round(volumes.reduce((a, b) => a + b, 0) / volumes.length);
+          }
+        } else {
+          avgMonthlySearches = metrics?.avg_monthly_searches || 0;
+        }
+
+        // Calculate 3-month change
+        let threeMonthChange: number | null = null;
+        if (monthlySearchVolumes.length >= 4) {
+          const recent = monthlySearchVolumes[monthlySearchVolumes.length - 1]?.volume || 0;
+          const threeMonthsAgo = monthlySearchVolumes[monthlySearchVolumes.length - 4]?.volume || 0;
+          if (threeMonthsAgo > 0) {
+            threeMonthChange = Math.round(((recent - threeMonthsAgo) / threeMonthsAgo) * 100);
+          }
+        }
+
+        // Calculate YoY change
+        let yearOverYearChange: number | null = null;
+        if (monthlySearchVolumes.length >= 12) {
+          const recent = monthlySearchVolumes[monthlySearchVolumes.length - 1]?.volume || 0;
+          const yearAgo = monthlySearchVolumes[0]?.volume || 0;
+          if (yearAgo > 0) {
+            yearOverYearChange = Math.round(((recent - yearAgo) / yearAgo) * 100);
+          }
+        }
+
+        // Convert bid values to numbers
+        const lowBidStr = metrics?.low_top_of_page_bid_micros || '0';
+        const highBidStr = metrics?.high_top_of_page_bid_micros || '0';
+        const lowBid = Number(lowBidStr);
+        const highBid = Number(highBidStr);
+        const avgCpc = lowBid > 0 && highBid > 0 ? Math.round((lowBid + highBid) / 2) : 0;
+
+        return {
+          keyword: result.text || '',
+          monthlySearchVolume: avgMonthlySearches,
+          avgCpcMicros: avgCpc,
+          lowBidMicros: lowBid,
+          highBidMicros: highBid,
+          competition: mapCompetitionLevel(metrics?.competition),
+          competitionIndex: metrics?.competition_index || 0,
+          monthlySearchVolumes,
+          threeMonthChange,
+          yearOverYearChange,
+        };
+      });
+    });
+
+    // Sort by volume descending (highest first)
+    results.sort((a, b) => b.monthlySearchVolume - a.monthlySearchVolume);
+
+    console.log(`[Google Ads] Returning ${results.length} keyword ideas (sorted by volume)`);
+    return results;
+
+  } catch (error) {
+    console.error(`[Google Ads] Error generating keyword ideas:`, error);
+    return [];
+  }
 }
 
 // =====================================================

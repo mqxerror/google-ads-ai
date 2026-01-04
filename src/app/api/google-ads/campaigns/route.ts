@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { updateCampaignStatus, createCampaign, CreateCampaignInput } from '@/lib/google-ads';
+import { updateCampaignStatus, createCampaign, CreateCampaignInput, fetchCampaigns } from '@/lib/google-ads';
 import { getCampaignsFromDB, getLastSyncStatus, canSync } from '@/lib/data-sync';
 
 // Demo campaigns for testing (shown when no DB data available)
@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
     const session = await auth();
     const searchParams = request.nextUrl.searchParams;
     const customerId = searchParams.get('customerId');
+    const forceRefresh = searchParams.get('forceRefresh') === 'true';
 
     // Demo mode - return demo data
     if (!customerId || customerId === 'demo') {
@@ -47,6 +48,35 @@ export async function GET(request: NextRequest) {
         dataFreshness: null,
         canSync: false,
       });
+    }
+
+    // Force refresh - fetch directly from Google Ads API (bypasses cache and rate limits)
+    // This is a "light refresh" that doesn't update the database but shows latest campaigns
+    if (forceRefresh && session?.refreshToken) {
+      try {
+        console.log('[Campaigns API] Force refresh - fetching directly from Google Ads API');
+        const campaigns = await fetchCampaigns(
+          session.refreshToken,
+          customerId,
+          process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
+        );
+
+        return NextResponse.json({
+          campaigns,
+          isDemo: false,
+          dataFreshness: {
+            lastSyncedAt: new Date().toISOString(),
+            timeAgo: 'just now',
+            isStale: false,
+            isLiveData: true, // Flag to indicate this is live data, not cached
+          },
+          canSync: true,
+          source: 'live_api',
+        });
+      } catch (apiError) {
+        console.error('[Campaigns API] Force refresh failed:', apiError);
+        // Fall through to cached data
+      }
     }
 
     // Try to get cached data from database first (no API call!)
@@ -73,10 +103,36 @@ export async function GET(request: NextRequest) {
             : null,
           canSync: syncCheck.allowed,
           nextSyncAt: syncCheck.nextSyncAt?.toISOString() || null,
+          source: 'cache',
         });
       }
 
-      // No cached data - return demo mode until first sync
+      // No cached data - try live API fetch if authenticated
+      if (session?.refreshToken) {
+        try {
+          console.log('[Campaigns API] No cache, fetching from Google Ads API');
+          const campaigns = await fetchCampaigns(
+            session.refreshToken,
+            customerId,
+            process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
+          );
+
+          if (campaigns.length > 0) {
+            return NextResponse.json({
+              campaigns,
+              isDemo: false,
+              needsSync: true, // Encourage full sync for metrics storage
+              message: 'Showing live data. Click "Sync Data" to cache metrics.',
+              canSync: syncCheck.allowed,
+              source: 'live_api',
+            });
+          }
+        } catch (apiError) {
+          console.error('[Campaigns API] Live API fetch failed:', apiError);
+        }
+      }
+
+      // No cached data and API failed - return demo mode until first sync
       return NextResponse.json({
         campaigns: DEMO_CAMPAIGNS,
         isDemo: true,

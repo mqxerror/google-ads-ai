@@ -41,6 +41,13 @@ interface NegativeSuggestion {
   campaignName?: string;
   adGroupId?: string;
   adGroupName?: string;
+  // KPI metrics
+  clicks?: number;
+  impressions?: number;
+  ctr?: number;
+  cpc?: number;
+  conversions?: number;
+  conversionRate?: number;
   // Traceability fields
   analysisMethod?: 'rule' | 'embedding' | 'claude' | 'deepseek' | 'moz';
   analysisCost?: number;
@@ -1646,6 +1653,34 @@ export default function SpendShieldPage() {
                                 </span>
                               </div>
                               <p className="text-sm text-text2 mb-2">{suggestion.reason}</p>
+                              {/* KPI Metrics Row */}
+                              <div className="flex items-center gap-4 text-xs mb-2">
+                                {suggestion.clicks !== undefined && (
+                                  <span className="text-text2">
+                                    <span className="text-text3">Clicks:</span> <span className="font-medium">{suggestion.clicks}</span>
+                                  </span>
+                                )}
+                                {suggestion.impressions !== undefined && (
+                                  <span className="text-text2">
+                                    <span className="text-text3">Impr:</span> <span className="font-medium">{suggestion.impressions.toLocaleString()}</span>
+                                  </span>
+                                )}
+                                {suggestion.ctr !== undefined && suggestion.ctr > 0 && (
+                                  <span className="text-text2">
+                                    <span className="text-text3">CTR:</span> <span className="font-medium">{suggestion.ctr.toFixed(2)}%</span>
+                                  </span>
+                                )}
+                                {suggestion.cpc !== undefined && suggestion.cpc > 0 && (
+                                  <span className="text-text2">
+                                    <span className="text-text3">CPC:</span> <span className="font-medium">${suggestion.cpc.toFixed(2)}</span>
+                                  </span>
+                                )}
+                                {suggestion.conversions !== undefined && (
+                                  <span className={`${suggestion.conversions === 0 ? 'text-danger' : 'text-success'}`}>
+                                    <span className="text-text3">Conv:</span> <span className="font-medium">{suggestion.conversions}</span>
+                                  </span>
+                                )}
+                              </div>
                               {suggestion.campaignName && (
                                 <p className="text-xs text-text3">
                                   📁 {suggestion.campaignName} {suggestion.adGroupName && `/ ${suggestion.adGroupName}`}

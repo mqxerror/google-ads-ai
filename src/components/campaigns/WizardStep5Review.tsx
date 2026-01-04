@@ -45,15 +45,26 @@ export default function WizardStep5Review({ data, setIsProcessing, onSuccess }: 
     setError(null);
 
     try {
+      // Get customer ID from localStorage
+      const customerId = typeof window !== 'undefined'
+        ? localStorage.getItem('quickads_customerId') || 'demo'
+        : 'demo';
+
       const response = await fetch('/api/campaigns/wizard/create', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-customer-id': customerId,
+        },
         body: JSON.stringify({
           campaignName: data.campaignName,
           campaignType: data.campaignType,
           targetLocation: data.targetLocation,
           language: data.language,
           goal: data.goal,
+          landingPageUrl: data.landingPageUrl,
+          includeSearchPartners: data.includeSearchPartners || false,
+          includeDisplayNetwork: data.includeDisplayNetwork || false,
           adGroups: data.adGroups,
           ads: data.ads,
           dailyBudget: data.dailyBudget,
@@ -71,6 +82,11 @@ export default function WizardStep5Review({ data, setIsProcessing, onSuccess }: 
       const { campaignId, campaignName } = await response.json();
 
       setCreatedCampaignId(campaignId);
+
+      // Clear wizard progress from localStorage
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('quickads_wizard_progress');
+      }
 
       // Show success for 2 seconds then close wizard
       setTimeout(() => {
@@ -178,6 +194,12 @@ export default function WizardStep5Review({ data, setIsProcessing, onSuccess }: 
             <div className="text-xs text-text3 mb-1">Language</div>
             <div className="font-medium text-text">{data.language?.toUpperCase()}</div>
           </div>
+          <div className="col-span-2">
+            <div className="text-xs text-text3 mb-1">Landing Page</div>
+            <div className="font-medium text-text truncate" title={data.landingPageUrl}>
+              {data.landingPageUrl || <span className="text-warning">Not set (will use default)</span>}
+            </div>
+          </div>
           <div>
             <div className="text-xs text-text3 mb-1">Daily Budget</div>
             <div className="font-medium text-text">${data.dailyBudget}</div>
@@ -192,6 +214,34 @@ export default function WizardStep5Review({ data, setIsProcessing, onSuccess }: 
               <div className="font-medium text-text">${data.targetCpa}</div>
             </div>
           )}
+        </div>
+
+        {/* Network Settings Sub-section */}
+        <div className="mt-4 pt-4 border-t border-divider">
+          <div className="text-xs text-text3 mb-2 font-medium">Network Settings</div>
+          <div className="flex flex-wrap gap-2">
+            <span className="px-2.5 py-1 bg-success/10 text-success text-xs rounded-full flex items-center gap-1">
+              ✓ Google Search
+            </span>
+            {data.includeSearchPartners ? (
+              <span className="px-2.5 py-1 bg-success/10 text-success text-xs rounded-full flex items-center gap-1">
+                ✓ Search Partners
+              </span>
+            ) : (
+              <span className="px-2.5 py-1 bg-surface text-text3 text-xs rounded-full flex items-center gap-1">
+                ✗ Search Partners
+              </span>
+            )}
+            {data.includeDisplayNetwork ? (
+              <span className="px-2.5 py-1 bg-success/10 text-success text-xs rounded-full flex items-center gap-1">
+                ✓ Display Network
+              </span>
+            ) : (
+              <span className="px-2.5 py-1 bg-surface text-text3 text-xs rounded-full flex items-center gap-1">
+                ✗ Display Network
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -245,7 +295,9 @@ export default function WizardStep5Review({ data, setIsProcessing, onSuccess }: 
                       <div className="text-blue-700 text-sm font-medium">
                         {ad.headlines.slice(0, 3).join(' | ')}
                       </div>
-                      <div className="text-xs text-gray-600 mt-0.5">example.com</div>
+                      <div className="text-xs text-gray-600 mt-0.5">
+                        {data.landingPageUrl ? (() => { try { return new URL(data.landingPageUrl).hostname; } catch { return data.landingPageUrl.replace(/^https?:\/\//, '').split('/')[0]; } })() : 'example.com'}
+                      </div>
                       <div className="text-xs text-gray-800 mt-1">{ad.descriptions[0]}</div>
                     </div>
                   </div>
