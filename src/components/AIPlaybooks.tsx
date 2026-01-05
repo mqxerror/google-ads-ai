@@ -28,9 +28,9 @@ export default function AIPlaybooks({ campaigns, onAction }: AIPlaybooksProps) {
     const playbooks: Playbook[] = [];
 
     // Wasters playbook
-    const wasters = campaigns.filter(c => c.aiScore < 40 && c.status === 'ENABLED');
+    const wasters = campaigns.filter(c => (c.aiScore ?? 0) < 40 && c.status === 'ENABLED');
     if (wasters.length > 0) {
-      const potentialSavings = wasters.reduce((sum, c) => sum + c.spend, 0) * 0.3;
+      const potentialSavings = wasters.reduce((sum, c) => sum + (c.spend ?? 0), 0) * 0.3;
       playbooks.push({
         id: 'pause-wasters',
         title: `Pause ${wasters.length} Waster${wasters.length > 1 ? 's' : ''}`,
@@ -49,7 +49,7 @@ export default function AIPlaybooks({ campaigns, onAction }: AIPlaybooksProps) {
     }
 
     // Winners playbook
-    const winners = campaigns.filter(c => c.aiScore >= 70 && c.status === 'ENABLED');
+    const winners = campaigns.filter(c => (c.aiScore ?? 0) >= 70 && c.status === 'ENABLED');
     if (winners.length > 0) {
       playbooks.push({
         id: 'boost-winners',
@@ -68,7 +68,7 @@ export default function AIPlaybooks({ campaigns, onAction }: AIPlaybooksProps) {
     }
 
     // Needs attention playbook
-    const needsAttention = campaigns.filter(c => c.aiScore >= 40 && c.aiScore < 70);
+    const needsAttention = campaigns.filter(c => (c.aiScore ?? 0) >= 40 && (c.aiScore ?? 0) < 70);
     if (needsAttention.length > 0) {
       playbooks.push({
         id: 'optimize-middle',
@@ -87,7 +87,7 @@ export default function AIPlaybooks({ campaigns, onAction }: AIPlaybooksProps) {
     }
 
     // Quick win playbook
-    const quickWins = campaigns.filter(c => c.ctr < 2 && c.status === 'ENABLED');
+    const quickWins = campaigns.filter(c => (c.ctr ?? 0) < 2 && c.status === 'ENABLED');
     if (quickWins.length > 0) {
       playbooks.push({
         id: 'improve-ctr',

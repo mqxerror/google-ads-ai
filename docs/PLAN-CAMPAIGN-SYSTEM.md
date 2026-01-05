@@ -538,23 +538,25 @@ Features:
 
 ## Implementation Phases
 
-### Phase 1: Data Layer (Current)
+### Phase 1: Data Layer (COMPLETE)
 - [x] Design unified schema
-- [ ] Create database migration
-- [ ] Create TypeScript types
-- [ ] Create API routes for campaigns CRUD
+- [x] Create database migration (`prisma/migrations/020_unified_campaign_system.sql`)
+- [x] Create TypeScript types (`src/types/campaign.ts`)
+- [x] Create API routes for campaigns CRUD (`src/app/api/campaigns/`)
+- [x] Create database operations (`src/lib/database/campaigns.ts`)
 
-### Phase 2: Asset Infrastructure
-- [ ] AssetUploader component
+### Phase 2: Asset Infrastructure (PARTIAL)
+- [x] AssetUploader component (`src/components/shared/AssetUploader.tsx`)
 - [ ] Cloud storage integration (S3/GCS)
-- [ ] Asset library UI
+- [x] Asset library UI (integrated in AssetUploader)
 - [ ] Image cropping/resizing
 
-### Phase 3: Visual Campaign Modal
-- [ ] Display campaign creation
-- [ ] Asset selection workflow
-- [ ] Audience targeting
-- [ ] Display ad preview
+### Phase 3: Visual Campaign Modal (PARTIAL)
+- [x] Visual Campaign Modal base (`src/components/campaigns/VisualCampaignModal.tsx`)
+- [x] Campaign type selection (Display/PMax/Demand Gen)
+- [x] Asset group management
+- [x] Basic targeting settings
+- [ ] Ad preview component
 
 ### Phase 4: PMax Extension
 - [ ] Asset group management

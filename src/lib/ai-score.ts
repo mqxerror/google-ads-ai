@@ -7,6 +7,7 @@ const CTR_BENCHMARKS: Record<CampaignType, { good: number; warning: number }> = 
   SHOPPING: { good: 0.86, warning: 0.5 },
   VIDEO: { good: 0.4, warning: 0.2 },
   PERFORMANCE_MAX: { good: 2.0, warning: 1.0 },
+  PMAX: { good: 2.0, warning: 1.0 }, // Alias for PERFORMANCE_MAX
   DEMAND_GEN: { good: 1.5, warning: 0.8 },
   APP: { good: 1.0, warning: 0.5 },
 };
@@ -17,6 +18,7 @@ const CPA_BENCHMARKS: Record<CampaignType, { good: number; warning: number }> = 
   SHOPPING: { good: 30, warning: 60 },
   VIDEO: { good: 50, warning: 100 },
   PERFORMANCE_MAX: { good: 35, warning: 70 },
+  PMAX: { good: 35, warning: 70 }, // Alias for PERFORMANCE_MAX
   DEMAND_GEN: { good: 45, warning: 90 },
   APP: { good: 25, warning: 50 },
 };

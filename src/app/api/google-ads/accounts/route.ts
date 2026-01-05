@@ -32,6 +32,7 @@ export async function GET() {
     // No client accounts found directly - try to list client accounts under MCC
     console.log('[Accounts API] No client accounts found directly, trying MCC...');
     const mccClientAccounts = await listMCCClientAccounts(session.refreshToken);
+    const mccId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
 
     if (mccClientAccounts.length > 0) {
       console.log(`[Accounts API] Found ${mccClientAccounts.length} client accounts from MCC`);
@@ -39,6 +40,7 @@ export async function GET() {
         accounts: mccClientAccounts,
         count: mccClientAccounts.length,
         source: 'mcc',
+        loginCustomerId: mccId, // MCC ID for API calls
       });
     }
 

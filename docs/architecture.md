@@ -20,6 +20,7 @@ This is a greenfield Next.js 14 application. We will use the official `create-ne
 |------|---------|-------------|--------|
 | 2024-12-14 | 1.0 | Initial Fullstack Architecture Document | Architect Agent |
 | 2024-12-14 | 1.1 | Updated for self-hosted deployment (Docker + personal server) | Architect Agent |
+| 2026-01-04 | 1.2 | Added Google Ads API integration architecture - REST API solution for PMax/Display/Demand Gen campaigns with Sharp image processing | Claude |
 
 ---
 
@@ -899,7 +900,108 @@ type ErrorCode =
 
 ---
 
-### 6.3 Component Diagram
+### 6.3 Google Ads API Integration Architecture
+
+#### Problem: google-ads-api Library Limitations
+
+The `google-ads-api` npm package has significant limitations for complex operations:
+
+1. **Atomic Mutate Operations Fail**: The library's `mutateResources()` method doesn't properly format operations for Google Ads API v21
+2. **Asset Group Creation Blocked**: PMax/Demand Gen campaigns require ALL assets + asset group + asset links in ONE atomic transaction
+3. **Error Messages Misleading**: Library returns "Mutate operations must have 'create', 'update', or 'remove' specified" even with correct format
+
+#### Solution: Direct REST API Integration
+
+Bypassed the library for complex operations using direct REST API calls:
+
+```typescript
+// src/lib/google-ads.ts
+export async function executeRestMutate(
+  refreshToken: string,
+  customerId: string,
+  mutateOperations: any[],
+  loginCustomerId?: string
+): Promise<any> {
+  const accessToken = await getAccessToken(refreshToken);
+  const url = `https://googleads.googleapis.com/v21/customers/${customerId}/googleAds:mutate`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'developer-token': process.env.GOOGLE_ADS_DEVELOPER_TOKEN!,
+      'Content-Type': 'application/json',
+      ...(loginCustomerId && { 'login-customer-id': loginCustomerId }),
+    },
+    body: JSON.stringify({ mutateOperations, partialFailure: false }),
+  });
+
+  return await response.json();
+}
+```
+
+#### REST API Operation Format
+
+The REST API uses camelCase and specific operation wrapper keys:
+
+```typescript
+// Text Asset
+{ assetOperation: { create: { resourceName, textAsset: { text } } } }
+
+// Image Asset
+{ assetOperation: { create: { resourceName, type: 'IMAGE', imageAsset: { data } } } }
+
+// Asset Group
+{ assetGroupOperation: { create: { resourceName, campaign, name, finalUrls, status } } }
+
+// Asset Group Asset Link
+{ assetGroupAssetOperation: { create: { assetGroup, asset, fieldType } } }
+```
+
+#### Image Processing with Sharp
+
+Google Ads requires strict image specifications:
+
+| Asset Type | Aspect Ratio | Recommended Size | Max File Size |
+|------------|--------------|------------------|---------------|
+| Marketing Image | 1.91:1 | 1200x628 | 5MB |
+| Square Marketing Image | 1:1 | 1200x1200 | 5MB |
+| Logo | 1:1 | 1200x1200 | 5MB |
+
+**Solution**: Process all images with Sharp before upload:
+
+```typescript
+// src/lib/google-ads-visual.ts
+async function processImageForGoogleAds(
+  imageBuffer: Buffer,
+  targetType: 'MARKETING_IMAGE' | 'SQUARE_MARKETING_IMAGE' | 'LOGO'
+): Promise<{ data: string; mimeType: number; size: number } | null> {
+  // 1. Calculate crop dimensions for target aspect ratio
+  // 2. Center-crop to correct aspect ratio
+  // 3. Resize to recommended dimensions
+  // 4. Compress with progressive quality reduction until < 5MB
+  // 5. Return base64 encoded JPEG
+}
+```
+
+#### Campaign Type Support
+
+| Campaign Type | Implementation | Asset Handling |
+|---------------|----------------|----------------|
+| **PMax** | REST API atomic mutate | Asset Groups with all assets linked in one operation |
+| **Display** | REST API for ads | Responsive Display Ad with headlines, descriptions, images, logos |
+| **Demand Gen** | REST API atomic mutate | Asset Groups (same pattern as PMax) |
+| **Search** | Library (simple) | Keywords and text ads |
+
+#### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/lib/google-ads.ts` | REST API helpers, token management |
+| `src/lib/google-ads-visual.ts` | PMax, Display, Demand Gen campaign creation |
+| `src/app/api/campaigns/sync/route.ts` | Campaign sync endpoint |
+
+### 6.4 Component Diagram
 
 ```mermaid
 graph TB

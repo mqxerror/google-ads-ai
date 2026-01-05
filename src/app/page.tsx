@@ -6,6 +6,7 @@ import { Campaign } from '@/types/campaign';
 import WhatIfDrawer from '@/components/WhatIfDrawer';
 import NegativeKeywordsPanel from '@/components/NegativeKeywordsPanel';
 import Link from 'next/link';
+import { useToast } from '@/components/ui/Toast';
 
 interface Message {
   id: string;
@@ -23,6 +24,16 @@ interface GoogleAdsAccount {
   customerId: string;
   descriptiveName: string;
   currencyCode?: string;
+}
+
+interface DraftCampaign {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  dailyBudget?: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export default function Home() {
@@ -44,6 +55,7 @@ export default function Home() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string>('demo');
   const [accounts, setAccounts] = useState<GoogleAdsAccount[]>([]);
+  const [loginCustomerId, setLoginCustomerId] = useState<string | null>(null); // MCC ID for API calls
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ENABLED' | 'PAUSED'>('ALL');
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
@@ -51,7 +63,12 @@ export default function Home() {
   const [hasSpendFilter, setHasSpendFilter] = useState(false);
   const [showFiltersDropdown, setShowFiltersDropdown] = useState(false);
   const [filtersLoaded, setFiltersLoaded] = useState(false);
+  const [draftCampaigns, setDraftCampaigns] = useState<DraftCampaign[]>([]);
+  const [loadingDrafts, setLoadingDrafts] = useState(false);
+  const [syncingDraftId, setSyncingDraftId] = useState<string | null>(null);
+  const [draftSyncError, setDraftSyncError] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const { addToast } = useToast();
 
   // Load filters from localStorage after mount (avoids hydration mismatch)
   useEffect(() => {
@@ -93,11 +110,12 @@ export default function Home() {
       return false;
     }
     // Score filter
-    if (scoreFilter === 'HIGH' && campaign.aiScore < 70) return false;
-    if (scoreFilter === 'MEDIUM' && (campaign.aiScore < 40 || campaign.aiScore >= 70)) return false;
-    if (scoreFilter === 'LOW' && campaign.aiScore >= 40) return false;
+    const aiScore = campaign.aiScore ?? 0;
+    if (scoreFilter === 'HIGH' && aiScore < 70) return false;
+    if (scoreFilter === 'MEDIUM' && (aiScore < 40 || aiScore >= 70)) return false;
+    if (scoreFilter === 'LOW' && aiScore >= 40) return false;
     // Has spend filter
-    if (hasSpendFilter && campaign.spend <= 0) return false;
+    if (hasSpendFilter && (campaign.spend ?? 0) <= 0) return false;
     return true;
   });
 
@@ -120,6 +138,8 @@ export default function Home() {
     } else {
       fetchCampaigns('demo');
     }
+    // Always fetch draft campaigns from local database
+    fetchDraftCampaigns();
   }, [isAuthenticated]);
 
   useEffect(() => {
@@ -132,6 +152,10 @@ export default function Home() {
       const data = await res.json();
       if (data.accounts && data.accounts.length > 0) {
         setAccounts(data.accounts);
+        // Store MCC ID if accounts came from MCC
+        if (data.loginCustomerId) {
+          setLoginCustomerId(data.loginCustomerId);
+        }
         // Use saved customerId if it exists in the accounts list, otherwise use first account
         const savedCustomerId = localStorage.getItem('quickads_customerId');
         const accountExists = savedCustomerId && data.accounts.some((acc: GoogleAdsAccount) => acc.customerId === savedCustomerId);
@@ -169,6 +193,89 @@ export default function Home() {
       console.error('Error fetching campaigns:', error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Fetch local/draft campaigns from database
+  async function fetchDraftCampaigns() {
+    try {
+      setLoadingDrafts(true);
+      const res = await fetch('/api/campaigns');
+      const data = await res.json();
+      // Only show DRAFT and PENDING campaigns, not SYNCED ones
+      const draftsOnly = (data.campaigns || []).filter(
+        (c: DraftCampaign) => c.status === 'DRAFT' || c.status === 'PENDING'
+      );
+      setDraftCampaigns(draftsOnly);
+    } catch (error) {
+      console.error('Error fetching draft campaigns:', error);
+    } finally {
+      setLoadingDrafts(false);
+    }
+  }
+
+  // Sync a draft campaign to Google Ads
+  async function handleSyncDraftCampaign(draftId: string) {
+    if (syncingDraftId || !customerId || customerId === 'demo') {
+      setDraftSyncError('Please sign in with Google and select an account to sync campaigns.');
+      return;
+    }
+
+    setSyncingDraftId(draftId);
+    setDraftSyncError(null);
+
+    try {
+      const res = await fetch('/api/campaigns/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          campaignId: draftId,
+          customerId,
+          loginCustomerId: loginCustomerId || undefined, // MCC ID for API access
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        // Build a detailed error message
+        let errorMsg = data.error || 'Failed to sync campaign';
+        if (data.details) {
+          errorMsg += `: ${data.details}`;
+        }
+        if (data.googleAdsError) {
+          errorMsg += ` (Google Ads: ${JSON.stringify(data.googleAdsError)})`;
+        }
+        throw new Error(errorMsg);
+      }
+
+      // Success - refresh both draft and live campaigns
+      await Promise.all([
+        fetchDraftCampaigns(),
+        fetchCampaigns(customerId),
+      ]);
+
+      // Show success toast
+      setDraftSyncError(null);
+      addToast({
+        type: 'success',
+        title: 'Campaign Synced!',
+        message: `Successfully synced to Google Ads. Campaign ID: ${data.googleCampaignId}`,
+        duration: 6000,
+      });
+
+    } catch (error) {
+      console.error('Error syncing draft campaign:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to sync campaign';
+      setDraftSyncError(errorMessage);
+      addToast({
+        type: 'error',
+        title: 'Sync Failed',
+        message: errorMessage.length > 100 ? errorMessage.substring(0, 100) + '...' : errorMessage,
+        duration: 8000,
+      });
+    } finally {
+      setSyncingDraftId(null);
     }
   }
 
@@ -274,13 +381,13 @@ export default function Home() {
   }
 
   // Calculate stats
-  const totalSpend = campaigns.reduce((sum, c) => sum + c.spend, 0);
-  const totalConversions = campaigns.reduce((sum, c) => sum + c.conversions, 0);
+  const totalSpend = campaigns.reduce((sum, c) => sum + (c.spend ?? 0), 0);
+  const totalConversions = campaigns.reduce((sum, c) => sum + (c.conversions ?? 0), 0);
   const activeCampaigns = campaigns.filter(c => c.status === 'ENABLED').length;
-  const avgScore = Math.round(campaigns.reduce((sum, c) => sum + c.aiScore, 0) / Math.max(campaigns.length, 1));
-  const wasters = campaigns.filter(c => c.aiScore < 40 && c.status === 'ENABLED');
-  const potentialSavings = wasters.reduce((sum, c) => sum + c.spend, 0) * 0.3;
-  const winners = campaigns.filter(c => c.aiScore >= 70 && c.status === 'ENABLED');
+  const avgScore = Math.round(campaigns.reduce((sum, c) => sum + (c.aiScore ?? 0), 0) / Math.max(campaigns.length, 1));
+  const wasters = campaigns.filter(c => (c.aiScore ?? 0) < 40 && c.status === 'ENABLED');
+  const potentialSavings = wasters.reduce((sum, c) => sum + (c.spend ?? 0), 0) * 0.3;
+  const winners = campaigns.filter(c => (c.aiScore ?? 0) >= 70 && c.status === 'ENABLED');
 
   // Mock monthly data for chart
   const monthlyData = [
@@ -339,6 +446,19 @@ export default function Home() {
               </button>
               {showToolsMenu && (
                 <div className="absolute top-full left-0 mt-2 w-64 bg-surface rounded-xl shadow-lg border border-divider overflow-hidden z-50">
+                  <Link
+                    href="/command"
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors bg-blue-500/5 border-l-2 border-blue-500"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center text-lg">
+                      &#129504;
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-blue-600">Insight Hub</p>
+                      <p className="text-xs text-text3">AI chat for all your data</p>
+                    </div>
+                    <span className="ml-auto px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[9px] font-medium rounded">NEW</span>
+                  </Link>
                   <Link
                     href="/spend-shield"
                     className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors"
@@ -433,6 +553,20 @@ export default function Home() {
                     <div>
                       <p className="text-sm font-medium text-purple-600">Intelligence Center</p>
                       <p className="text-xs text-text3">Brand & audience research</p>
+                    </div>
+                  </Link>
+                  <Link
+                    href="/ad-preview-center"
+                    className="flex items-center gap-3 px-4 py-3 hover:bg-surface2 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-cyan-500/10 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-cyan-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-text">Ad Preview Center</p>
+                      <p className="text-xs text-text3">Multi-format ad previews</p>
                     </div>
                   </Link>
                 </div>
@@ -773,6 +907,86 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* Draft/Local Campaigns Section */}
+              {draftCampaigns.length > 0 && (
+                <div className="mb-6 bg-gradient-to-r from-accent/5 to-purple-500/5 border border-accent/20 rounded-xl overflow-hidden">
+                  <div className="px-6 py-3 border-b border-accent/20 flex items-center justify-between bg-accent/5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">📝</span>
+                      <h3 className="font-semibold text-text">Draft Campaigns</h3>
+                      <span className="px-2 py-0.5 bg-accent/20 text-accent text-xs rounded-full">
+                        {draftCampaigns.length} pending
+                      </span>
+                    </div>
+                    <p className="text-xs text-text3">Created locally - sync to Google Ads to go live</p>
+                  </div>
+                  {draftSyncError && (
+                    <div className="mx-6 mt-3 px-4 py-2 bg-danger/10 border border-danger/20 rounded-lg flex items-center justify-between">
+                      <p className="text-sm text-danger">{draftSyncError}</p>
+                      <button
+                        onClick={() => setDraftSyncError(null)}
+                        className="text-danger hover:text-danger/70 transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                  <div className="divide-y divide-accent/10">
+                    {draftCampaigns.map(draft => (
+                      <div key={draft.id} className="px-6 py-4 flex items-center justify-between hover:bg-accent/5 transition-colors">
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center">
+                            <span className="text-lg">
+                              {draft.type === 'PMAX' ? '🚀' : draft.type === 'SEARCH' ? '🔍' : draft.type === 'DISPLAY' ? '🖼️' : draft.type === 'VIDEO' ? '🎬' : '✨'}
+                            </span>
+                          </div>
+                          <div>
+                            <h4 className="font-medium text-text">{draft.name}</h4>
+                            <div className="flex items-center gap-2 text-xs text-text3">
+                              <span className="px-1.5 py-0.5 bg-warning/10 text-warning rounded">{draft.status}</span>
+                              <span>{draft.type}</span>
+                              {draft.dailyBudget && <span>• ${draft.dailyBudget}/day</span>}
+                              <span>• Created {new Date(draft.createdAt).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            href={`/campaigns/${draft.id}`}
+                            className="px-3 py-1.5 text-sm text-accent hover:bg-accent/10 rounded-lg transition-colors"
+                          >
+                            Edit
+                          </Link>
+                          <button
+                            className={`px-3 py-1.5 text-sm rounded-lg transition-colors flex items-center gap-2 ${
+                              syncingDraftId === draft.id
+                                ? 'bg-accent/50 text-white cursor-wait'
+                                : 'bg-accent text-white hover:bg-accent/90'
+                            }`}
+                            onClick={() => handleSyncDraftCampaign(draft.id)}
+                            disabled={syncingDraftId !== null}
+                          >
+                            {syncingDraftId === draft.id ? (
+                              <>
+                                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                </svg>
+                                Syncing...
+                              </>
+                            ) : (
+                              'Sync to Ads'
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {loading ? (
                 <div className="p-12 text-center text-text2">Loading campaigns...</div>
               ) : filteredCampaigns.length === 0 ? (
@@ -801,14 +1015,18 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="divide-y divide-divider">
-                  {filteredCampaigns.map(campaign => (
+                  {filteredCampaigns.map(campaign => {
+                    const score = campaign.aiScore ?? 0;
+                    const spend = campaign.spend ?? 0;
+                    const ctr = campaign.ctr ?? 0;
+                    return (
                     <div key={campaign.id} className="campaign-row px-6 py-4 flex items-center">
                       {/* Campaign Info */}
                       <div className="flex items-center gap-4 flex-1">
                         <div className={`campaign-icon w-10 h-10 rounded-xl flex items-center justify-center transition-transform ${
-                          campaign.aiScore >= 70 ? 'bg-success-light' : campaign.aiScore >= 40 ? 'bg-warning-light' : 'bg-danger-light'
+                          score >= 70 ? 'bg-success-light' : score >= 40 ? 'bg-warning-light' : 'bg-danger-light'
                         }`}>
-                          <svg className={`w-5 h-5 ${campaign.aiScore >= 70 ? 'text-success' : campaign.aiScore >= 40 ? 'text-warning' : 'text-danger'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <svg className={`w-5 h-5 ${score >= 70 ? 'text-success' : score >= 40 ? 'text-warning' : 'text-danger'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                           </svg>
                         </div>
@@ -824,15 +1042,15 @@ export default function Home() {
                       {/* Metrics */}
                       <div className="flex items-center gap-8 text-sm">
                         <div className="text-right w-24">
-                          <div className="font-medium text-text tabular-nums">${campaign.spend.toLocaleString()}</div>
+                          <div className="font-medium text-text tabular-nums">${spend.toLocaleString()}</div>
                           <div className="text-xs text-text3">Spend</div>
                         </div>
                         <div className="text-right w-20">
-                          <div className="font-medium text-text tabular-nums">{campaign.conversions}</div>
+                          <div className="font-medium text-text tabular-nums">{campaign.conversions ?? 0}</div>
                           <div className="text-xs text-text3">Conv</div>
                         </div>
                         <div className="text-right w-20">
-                          <div className="font-medium text-text tabular-nums">{campaign.ctr.toFixed(2)}%</div>
+                          <div className="font-medium text-text tabular-nums">{ctr.toFixed(2)}%</div>
                           <div className="text-xs text-text3">CTR</div>
                         </div>
 
@@ -840,14 +1058,14 @@ export default function Home() {
                         <button
                           onClick={() => handleScoreClick(campaign)}
                           className={`w-12 h-8 rounded-lg text-sm font-semibold flex items-center justify-center transition-all hover:scale-105 ${
-                            campaign.aiScore >= 70
+                            score >= 70
                               ? 'bg-success-light text-success'
-                              : campaign.aiScore >= 40
+                              : score >= 40
                               ? 'bg-warning-light text-warning'
                               : 'bg-danger-light text-danger'
                           }`}
                         >
-                          {campaign.aiScore}
+                          {score}
                         </button>
 
                         {/* Action Button */}
@@ -863,7 +1081,8 @@ export default function Home() {
                         </button>
                       </div>
                     </div>
-                  ))}
+                  );
+                  })}
                 </div>
               )}
             </div>

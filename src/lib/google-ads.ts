@@ -5,6 +5,76 @@ import { getGoogleAdsCircuitBreaker } from './keyword-data/circuit-breaker';
 import type { GoogleAdsKeywordMetrics } from './keyword-data/types';
 import type { AccountKeyword, KeywordPerformanceData } from './database/types';
 
+// Google Ads API version
+const GOOGLE_ADS_API_VERSION = 'v21';
+
+/**
+ * Get access token from refresh token using Google OAuth
+ */
+export async function getAccessToken(refreshToken: string): Promise<string> {
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID!,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to get access token: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data.access_token;
+}
+
+/**
+ * Execute a mutate operation directly via REST API
+ * This bypasses the google-ads-api library for better control over atomic operations
+ */
+export async function executeRestMutate(
+  refreshToken: string,
+  customerId: string,
+  mutateOperations: any[],
+  loginCustomerId?: string
+): Promise<any> {
+  const accessToken = await getAccessToken(refreshToken);
+  const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN!;
+
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${accessToken}`,
+    'developer-token': developerToken,
+    'Content-Type': 'application/json',
+  };
+
+  if (loginCustomerId) {
+    headers['login-customer-id'] = loginCustomerId;
+  }
+
+  const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/googleAds:mutate`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      mutateOperations,
+      partialFailure: false,
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    console.error('[REST Mutate] API Error:', JSON.stringify(data, null, 2));
+    throw new Error(data.error?.message || `REST API error: ${response.status}`);
+  }
+
+  return data;
+}
+
 // Create Google Ads API client
 export function createGoogleAdsClient() {
   return new GoogleAdsApi({

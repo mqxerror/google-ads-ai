@@ -19,11 +19,11 @@ const WEIGHTS = {
 
 export default function WhatIfDrawer({ campaign, isOpen, onClose }: WhatIfDrawerProps) {
   // Calculate CPC from spend/clicks
-  const calculatedCpc = campaign.spend / Math.max(campaign.clicks || 1, 1);
+  const calculatedCpc = (campaign.spend ?? 0) / Math.max(campaign.clicks || 1, 1);
 
   // Current values
-  const [ctr, setCtr] = useState(campaign.ctr);
-  const [convRate, setConvRate] = useState((campaign.conversions / Math.max(campaign.clicks || 1, 1)) * 100);
+  const [ctr, setCtr] = useState(campaign.ctr ?? 0);
+  const [convRate, setConvRate] = useState(((campaign.conversions ?? 0) / Math.max(campaign.clicks || 1, 1)) * 100);
   const [cpc, setCpc] = useState(calculatedCpc);
   const [qualityScore, setQualityScore] = useState(7); // Default QS
 
@@ -42,18 +42,18 @@ export default function WhatIfDrawer({ campaign, isOpen, onClose }: WhatIfDrawer
     );
   };
 
-  const currentScore = campaign.aiScore;
+  const currentScore = campaign.aiScore ?? 0;
   const projectedScore = calculateScore(ctr, convRate, cpc, qualityScore);
   const scoreDiff = projectedScore - currentScore;
 
   // Calculate financial impact
-  const projectedSavings = scoreDiff > 0 ? (scoreDiff * campaign.spend * 0.01).toFixed(2) : '0';
+  const projectedSavings = scoreDiff > 0 ? (scoreDiff * (campaign.spend ?? 0) * 0.01).toFixed(2) : '0';
 
   // Reset values when campaign changes
   useEffect(() => {
-    setCtr(campaign.ctr);
-    setConvRate((campaign.conversions / Math.max(campaign.clicks || 1, 1)) * 100);
-    setCpc(campaign.spend / Math.max(campaign.clicks || 1, 1));
+    setCtr(campaign.ctr ?? 0);
+    setConvRate(((campaign.conversions ?? 0) / Math.max(campaign.clicks || 1, 1)) * 100);
+    setCpc((campaign.spend ?? 0) / Math.max(campaign.clicks || 1, 1));
     setQualityScore(7);
   }, [campaign]);
 
@@ -151,7 +151,7 @@ export default function WhatIfDrawer({ campaign, isOpen, onClose }: WhatIfDrawer
             />
             <div className="flex justify-between text-xs text-text3 mt-1">
               <span>0%</span>
-              <span>Current: {campaign.ctr.toFixed(2)}%</span>
+              <span>Current: {(campaign.ctr ?? 0).toFixed(2)}%</span>
               <span>10%</span>
             </div>
           </div>

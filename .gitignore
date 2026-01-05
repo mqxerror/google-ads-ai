@@ -34,3 +34,7 @@ yarn-error.log*
 next-env.d.ts
 logs/
 screenshots/
+
+# Uploaded images (too large for git)
+public/uploads/images/*
+!public/uploads/images/.gitkeep
