@@ -12,20 +12,33 @@ export function ChatPanel() {
     isStreaming,
     error,
     mcpConnections,
+    campaigns,
+    isLoadingCampaigns,
     sendMessage,
     clearMessages,
     executeAction,
+    refreshCampaigns,
   } = useInsightChat();
 
   const handleConfigure = (type: string) => {
-    // TODO: Open configuration modal for the MCP type
-    console.log('Configure MCP:', type);
+    // For Google Ads, refresh campaigns
+    if (type === 'google_ads') {
+      refreshCampaigns();
+    } else {
+      // TODO: Open configuration modal for other MCP types
+      console.log('Configure MCP:', type);
+    }
   };
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
       {/* MCP Status Bar */}
-      <MCPStatusBar connections={mcpConnections} onConfigure={handleConfigure} />
+      <MCPStatusBar
+        connections={mcpConnections}
+        onConfigure={handleConfigure}
+        onRefresh={refreshCampaigns}
+        isRefreshing={isLoadingCampaigns}
+      />
 
       {/* Error banner */}
       {error && (
@@ -40,14 +53,31 @@ export function ChatPanel() {
         </div>
       )}
 
+      {/* Loading campaigns indicator */}
+      {isLoadingCampaigns && messages.length === 0 && (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-3" />
+            <p className="text-gray-500 text-sm">Loading your campaigns...</p>
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
-      <MessageList messages={messages} onAction={executeAction} />
+      {(!isLoadingCampaigns || messages.length > 0) && (
+        <MessageList messages={messages} onAction={executeAction} />
+      )}
 
       {/* Input */}
       <ChatInput
         onSend={sendMessage}
         isLoading={isLoading || isStreaming}
-        placeholder="Ask about campaigns, keywords, analytics, or search data..."
+        disabled={isLoadingCampaigns && messages.length === 0}
+        placeholder={
+          campaigns.length > 0
+            ? `Ask about your ${campaigns.length} campaigns...`
+            : "Ask about campaigns, keywords, analytics, or search data..."
+        }
       />
     </div>
   );

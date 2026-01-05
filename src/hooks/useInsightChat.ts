@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 
 export interface MCPSource {
   mcp: 'google_ads' | 'analytics' | 'search_console' | 'bigquery';
@@ -33,23 +33,34 @@ export interface MCPConnection {
   error?: string;
 }
 
+export interface CampaignData {
+  id: string;
+  name: string;
+  status: string;
+  type?: string;
+  spend: number;
+  clicks?: number;
+  impressions?: number;
+  conversions: number;
+  ctr: number;
+  cpa: number;
+  roas?: number;
+  aiScore?: number;
+}
+
 interface UseInsightChatReturn {
   messages: InsightMessage[];
   isLoading: boolean;
   isStreaming: boolean;
   error: string | null;
   mcpConnections: MCPConnection[];
+  campaigns: CampaignData[];
+  isLoadingCampaigns: boolean;
   sendMessage: (content: string) => Promise<void>;
   clearMessages: () => void;
   executeAction: (action: InsightAction) => Promise<void>;
+  refreshCampaigns: () => Promise<void>;
 }
-
-const DEFAULT_MCP_CONNECTIONS: MCPConnection[] = [
-  { type: 'google_ads', name: 'Google Ads', status: 'connected' },
-  { type: 'analytics', name: 'Analytics', status: 'disconnected' },
-  { type: 'search_console', name: 'Search Console', status: 'disconnected' },
-  { type: 'bigquery', name: 'BigQuery', status: 'disconnected' },
-];
 
 const SUGGESTED_PROMPTS = [
   "Show me campaigns with high spend but low conversions",
@@ -59,32 +70,163 @@ const SUGGESTED_PROMPTS = [
 ];
 
 export function useInsightChat(): UseInsightChatReturn {
-  const [messages, setMessages] = useState<InsightMessage[]>([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content: `Welcome to **Insight Hub**! I'm your AI assistant connected to your Google Marketing data.
-
-I can help you:
-- Analyze campaign performance and find optimization opportunities
-- Identify wasted spend and suggest negative keywords
-- Correlate data across Google Ads, Analytics, and Search Console
-- Answer questions about your marketing data in natural language
-
-**Try asking:**
-- "Show me campaigns spending over $100/day with low ROAS"
-- "What search terms are wasting budget?"
-- "Which landing pages have high bounce rates?"`,
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<InsightMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mcpConnections, setMcpConnections] = useState<MCPConnection[]>(DEFAULT_MCP_CONNECTIONS);
+  const [mcpConnections, setMcpConnections] = useState<MCPConnection[]>([
+    { type: 'google_ads', name: 'Google Ads', status: 'loading' },
+    { type: 'analytics', name: 'Analytics', status: 'disconnected' },
+    { type: 'search_console', name: 'Search Console', status: 'disconnected' },
+    { type: 'bigquery', name: 'BigQuery', status: 'disconnected' },
+  ]);
+  const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
+  const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(true);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const initializedRef = useRef(false);
 
   const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  // Fetch Google Ads account on mount
+  useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
+    fetchAccountAndCampaigns();
+  }, []);
+
+  const fetchAccountAndCampaigns = async () => {
+    setIsLoadingCampaigns(true);
+
+    try {
+      // First, get the account
+      const accountsRes = await fetch('/api/google-ads/accounts');
+      const accountsData = await accountsRes.json();
+
+      if (accountsData.error) {
+        console.error('[InsightChat] Account error:', accountsData.error);
+        setMcpConnections(prev => prev.map(c =>
+          c.type === 'google_ads' ? { ...c, status: 'error', error: accountsData.error } : c
+        ));
+        setWelcomeMessage(null, accountsData.error);
+        setIsLoadingCampaigns(false);
+        return;
+      }
+
+      if (!accountsData.accounts || accountsData.accounts.length === 0) {
+        setMcpConnections(prev => prev.map(c =>
+          c.type === 'google_ads' ? { ...c, status: 'disconnected' } : c
+        ));
+        setWelcomeMessage(null, 'No Google Ads accounts found');
+        setIsLoadingCampaigns(false);
+        return;
+      }
+
+      // Use first account
+      const account = accountsData.accounts[0];
+      setSelectedAccountId(account.customerId);
+
+      // Fetch campaigns for this account
+      const campaignsRes = await fetch(`/api/google-ads/campaigns?customerId=${account.customerId}`);
+      const campaignsData = await campaignsRes.json();
+
+      if (campaignsData.campaigns && campaignsData.campaigns.length > 0 && !campaignsData.isDemo) {
+        setCampaigns(campaignsData.campaigns);
+        setMcpConnections(prev => prev.map(c =>
+          c.type === 'google_ads'
+            ? { ...c, status: 'connected', lastSync: campaignsData.dataFreshness?.lastSyncedAt ? new Date(campaignsData.dataFreshness.lastSyncedAt) : undefined }
+            : c
+        ));
+        setWelcomeMessage(campaignsData.campaigns);
+      } else {
+        // Demo mode or no campaigns
+        setCampaigns(campaignsData.campaigns || []);
+        setMcpConnections(prev => prev.map(c =>
+          c.type === 'google_ads' ? { ...c, status: campaignsData.isDemo ? 'disconnected' : 'connected' } : c
+        ));
+        setWelcomeMessage(campaignsData.isDemo ? null : campaignsData.campaigns);
+      }
+    } catch (err) {
+      console.error('[InsightChat] Failed to fetch campaigns:', err);
+      setMcpConnections(prev => prev.map(c =>
+        c.type === 'google_ads' ? { ...c, status: 'error', error: 'Failed to connect' } : c
+      ));
+      setWelcomeMessage(null, 'Failed to connect to Google Ads');
+    } finally {
+      setIsLoadingCampaigns(false);
+    }
+  };
+
+  const refreshCampaigns = async () => {
+    if (selectedAccountId) {
+      setIsLoadingCampaigns(true);
+      try {
+        const res = await fetch(`/api/google-ads/campaigns?customerId=${selectedAccountId}&forceRefresh=true`);
+        const data = await res.json();
+        if (data.campaigns) {
+          setCampaigns(data.campaigns);
+        }
+      } catch (err) {
+        console.error('[InsightChat] Failed to refresh campaigns:', err);
+      } finally {
+        setIsLoadingCampaigns(false);
+      }
+    }
+  };
+
+  const setWelcomeMessage = (campaignData: CampaignData[] | null, errorMsg?: string) => {
+    let content = '';
+
+    if (errorMsg) {
+      content = `Welcome to **Insight Hub**! 🧠
+
+⚠️ **${errorMsg}**
+
+Please make sure you're signed in with a Google account that has access to Google Ads.
+
+Once connected, I can help you:
+- Analyze campaign performance
+- Identify wasted spend
+- Suggest optimizations`;
+    } else if (!campaignData || campaignData.length === 0) {
+      content = `Welcome to **Insight Hub**! 🧠
+
+I'm your AI assistant for Google Marketing data.
+
+📊 **No campaigns found** - Start by creating a campaign or syncing your data.
+
+I can help you:
+- Analyze campaign performance
+- Identify wasted spend and suggest negative keywords
+- Answer questions about your marketing data`;
+    } else {
+      const totalSpend = campaignData.reduce((sum, c) => sum + (c.spend || 0), 0);
+      const totalConversions = campaignData.reduce((sum, c) => sum + (c.conversions || 0), 0);
+      const enabledCount = campaignData.filter(c => c.status === 'ENABLED').length;
+
+      content = `Welcome to **Insight Hub**! 🧠
+
+✅ **Connected to Google Ads** - ${campaignData.length} campaigns loaded
+
+**Quick Stats:**
+- 📊 ${enabledCount} active campaigns
+- 💰 $${totalSpend.toLocaleString()} total spend
+- 🎯 ${totalConversions} conversions
+
+**Try asking:**
+- "Which campaigns have high spend but low conversions?"
+- "Show me my best performing campaign"
+- "What's my average CPA?"`;
+    }
+
+    setMessages([{
+      id: 'welcome',
+      role: 'assistant',
+      content,
+      timestamp: new Date(),
+    }]);
+  };
 
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || isLoading) return;
@@ -126,13 +268,26 @@ I can help you:
         .slice(-10) // Last 10 messages for context
         .map(m => ({ role: m.role, content: m.content }));
 
-      // Call the chat API with streaming
+      // Call the chat API with streaming - pass real campaign data!
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: [...history, { role: 'user', content: content.trim() }],
           context: 'insight_hub',
+          campaigns: campaigns.map(c => ({
+            id: c.id,
+            name: c.name,
+            status: c.status,
+            type: c.type,
+            spend: c.spend || 0,
+            conversions: c.conversions || 0,
+            ctr: c.ctr || 0,
+            cpa: c.cpa || 0,
+            roas: c.roas,
+            clicks: c.clicks,
+            impressions: c.impressions,
+          })),
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -233,7 +388,7 @@ I can help you:
       setIsStreaming(false);
       abortControllerRef.current = null;
     }
-  }, [messages, isLoading]);
+  }, [messages, isLoading, campaigns]);
 
   const clearMessages = useCallback(() => {
     setMessages([
@@ -269,9 +424,12 @@ I can help you:
     isStreaming,
     error,
     mcpConnections,
+    campaigns,
+    isLoadingCampaigns,
     sendMessage,
     clearMessages,
     executeAction,
+    refreshCampaigns,
   };
 }
 

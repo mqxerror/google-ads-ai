@@ -1,20 +1,26 @@
 import { NextRequest } from 'next/server';
 
+interface CampaignData {
+  id: string;
+  name: string;
+  status: string;
+  type?: string;
+  spend: number;
+  conversions: number;
+  ctr: number;
+  cpa: number;
+  roas?: number;
+  clicks?: number;
+  impressions?: number;
+}
+
 // Simplified AI chat endpoint with streaming
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { messages, campaigns } = body as {
       messages: Array<{ role: 'user' | 'assistant'; content: string }>;
-      campaigns?: Array<{
-        id: string;
-        name: string;
-        status: string;
-        spend: number;
-        conversions: number;
-        ctr: number;
-        cpa: number;
-      }>;
+      campaigns?: CampaignData[];
     };
 
     if (!messages || messages.length === 0) {
@@ -69,26 +75,104 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function buildSystemPrompt(campaigns?: Array<{ name: string; status: string; spend: number; conversions: number; ctr: number; cpa: number }>) {
-  let prompt = `You are an expert Google Ads assistant. Help users optimize campaigns, analyze performance, and take quick actions.
+function buildSystemPrompt(campaigns?: CampaignData[]) {
+  let prompt = `You are an expert Google Ads analyst and optimization specialist working in the Insight Hub. You have direct access to the user's real Google Ads campaign data.
 
-Be concise and actionable. Focus on:
-- Identifying optimization opportunities
-- Suggesting specific actions (pause, enable, adjust budgets)
-- Providing data-driven recommendations`;
+## Your Role
+- Analyze campaign performance using ACTUAL data provided below
+- Identify optimization opportunities and wasted spend
+- Provide specific, actionable recommendations
+- Answer questions about campaign metrics accurately
+- Be conversational but data-driven
+
+## Response Guidelines
+- Use the REAL campaign data below - never make up numbers
+- Be concise but thorough
+- Use bullet points and formatting for clarity
+- When discussing specific campaigns, reference them by name
+- Suggest specific actions (pause, increase budget, add negatives)
+- If asked about data you don't have, say so honestly`;
 
   if (campaigns && campaigns.length > 0) {
-    const totalSpend = campaigns.reduce((sum, c) => sum + c.spend, 0);
-    const totalConv = campaigns.reduce((sum, c) => sum + c.conversions, 0);
+    const totalSpend = campaigns.reduce((sum, c) => sum + (c.spend || 0), 0);
+    const totalConv = campaigns.reduce((sum, c) => sum + (c.conversions || 0), 0);
+    const totalClicks = campaigns.reduce((sum, c) => sum + (c.clicks || 0), 0);
+    const totalImpressions = campaigns.reduce((sum, c) => sum + (c.impressions || 0), 0);
+    const enabledCampaigns = campaigns.filter(c => c.status === 'ENABLED');
+    const pausedCampaigns = campaigns.filter(c => c.status === 'PAUSED');
+    const avgCPA = totalConv > 0 ? totalSpend / totalConv : 0;
+    const avgCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
 
-    prompt += `\n\n## Current Campaigns (${campaigns.length} total)
-Total Spend: $${totalSpend.toFixed(2)} | Total Conversions: ${totalConv}
+    prompt += `
 
+## REAL CAMPAIGN DATA (${campaigns.length} campaigns)
+
+### Summary Metrics
+- **Total Spend:** $${totalSpend.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+- **Total Conversions:** ${totalConv.toLocaleString()}
+- **Total Clicks:** ${totalClicks.toLocaleString()}
+- **Total Impressions:** ${totalImpressions.toLocaleString()}
+- **Average CPA:** $${avgCPA.toFixed(2)}
+- **Average CTR:** ${avgCTR.toFixed(2)}%
+- **Active Campaigns:** ${enabledCampaigns.length}
+- **Paused Campaigns:** ${pausedCampaigns.length}
+
+### Individual Campaign Data
 `;
-    campaigns.forEach(c => {
-      const status = c.status === 'ENABLED' ? '✅' : '⏸️';
-      prompt += `${status} **${c.name}**: $${c.spend.toFixed(2)} spend, ${c.conversions} conv, ${c.ctr.toFixed(2)}% CTR, $${c.cpa.toFixed(2)} CPA\n`;
+
+    // Sort by spend descending for analysis
+    const sortedCampaigns = [...campaigns].sort((a, b) => (b.spend || 0) - (a.spend || 0));
+
+    sortedCampaigns.forEach((c, i) => {
+      const status = c.status === 'ENABLED' ? '🟢' : '🔴';
+      const cpaDisplay = c.conversions > 0 ? `$${(c.spend / c.conversions).toFixed(2)}` : 'N/A (no conversions)';
+      const roasDisplay = c.roas ? `${c.roas.toFixed(2)}x` : 'N/A';
+
+      prompt += `
+${i + 1}. **${c.name}** ${status} ${c.status}
+   - Type: ${c.type || 'Unknown'}
+   - Spend: $${(c.spend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+   - Conversions: ${c.conversions || 0}
+   - CPA: ${cpaDisplay}
+   - Clicks: ${c.clicks?.toLocaleString() || 'N/A'}
+   - Impressions: ${c.impressions?.toLocaleString() || 'N/A'}
+   - CTR: ${c.ctr?.toFixed(2) || 0}%
+   - ROAS: ${roasDisplay}
+`;
     });
+
+    // Add insights based on data
+    prompt += `
+### Quick Insights
+`;
+
+    // Find high spend, low conversion campaigns
+    const wastingCampaigns = campaigns.filter(c => c.spend > 100 && c.conversions === 0);
+    if (wastingCampaigns.length > 0) {
+      prompt += `- ⚠️ ${wastingCampaigns.length} campaign(s) have spend but NO conversions: ${wastingCampaigns.map(c => c.name).join(', ')}\n`;
+    }
+
+    // Find high CPA campaigns
+    const highCPACampaigns = campaigns.filter(c => c.conversions > 0 && (c.spend / c.conversions) > avgCPA * 2);
+    if (highCPACampaigns.length > 0) {
+      prompt += `- 📈 ${highCPACampaigns.length} campaign(s) have CPA 2x above average: ${highCPACampaigns.map(c => c.name).join(', ')}\n`;
+    }
+
+    // Find top performers
+    const topPerformers = campaigns
+      .filter(c => c.conversions > 0)
+      .sort((a, b) => (a.spend / a.conversions) - (b.spend / b.conversions))
+      .slice(0, 3);
+    if (topPerformers.length > 0) {
+      prompt += `- 🏆 Top performers by CPA: ${topPerformers.map(c => `${c.name} ($${(c.spend / c.conversions).toFixed(2)})`).join(', ')}\n`;
+    }
+
+  } else {
+    prompt += `
+
+## NO CAMPAIGN DATA AVAILABLE
+The user either has no campaigns or their Google Ads account is not connected.
+Guide them to connect their account or create their first campaign.`;
   }
 
   return prompt;
@@ -157,7 +241,7 @@ async function streamAnthropicResponse(
 
 async function simulateResponse(
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
-  campaigns: Array<{ name: string; status: string; spend: number; conversions: number }> | undefined,
+  campaigns: CampaignData[] | undefined,
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder
 ) {
@@ -165,36 +249,78 @@ async function simulateResponse(
 
   let response = '';
 
-  if (lastMessage.includes('spend') || lastMessage.includes('conversion') || lastMessage.includes('campaign')) {
-    response = `Based on your query about campaigns, here's what I found:\n\n**Campaign Performance Overview:**\n\n`;
-    if (campaigns && campaigns.length > 0) {
-      const highSpend = campaigns.filter(c => c.spend > 100);
-      const lowConv = campaigns.filter(c => c.conversions === 0 && c.spend > 0);
+  // If we have real campaigns, provide data-driven responses
+  if (campaigns && campaigns.length > 0) {
+    const totalSpend = campaigns.reduce((sum, c) => sum + (c.spend || 0), 0);
+    const totalConversions = campaigns.reduce((sum, c) => sum + (c.conversions || 0), 0);
+    const avgCPA = totalConversions > 0 ? totalSpend / totalConversions : 0;
+    const noConversions = campaigns.filter(c => c.conversions === 0 && c.spend > 0);
+    const lowConvHighSpend = campaigns.filter(c => c.spend > 100 && c.conversions < 5);
+    const topPerformers = campaigns.filter(c => c.conversions > 0).sort((a, b) => (a.spend / a.conversions) - (b.spend / b.conversions));
 
-      if (highSpend.length > 0) {
-        response += `**High Spend Campaigns:**\n`;
-        highSpend.slice(0, 3).forEach(c => {
-          response += `- ${c.name}: $${c.spend.toFixed(0)} spent, ${c.conversions} conversions\n`;
+    if (lastMessage.includes('spend') && lastMessage.includes('low') && (lastMessage.includes('conversion') || lastMessage.includes('conv'))) {
+      response = `## Campaigns with High Spend & Low Conversions\n\n`;
+      if (lowConvHighSpend.length > 0) {
+        response += `Found **${lowConvHighSpend.length} campaigns** that need attention:\n\n`;
+        lowConvHighSpend.slice(0, 5).forEach((c, i) => {
+          const cpa = c.conversions > 0 ? `$${(c.spend / c.conversions).toFixed(2)}` : '∞ (no conversions)';
+          response += `${i + 1}. **${c.name}**\n   - Spend: $${c.spend.toLocaleString()}\n   - Conversions: ${c.conversions}\n   - CPA: ${cpa}\n\n`;
         });
-        response += `\n`;
+        response += `**Recommendation:** Consider pausing or optimizing these campaigns to reduce wasted spend.`;
+      } else {
+        response += `Great news! None of your campaigns have high spend with low conversions.`;
       }
-      if (lowConv.length > 0) {
-        response += `**⚠️ Campaigns with spend but no conversions:**\n`;
-        lowConv.slice(0, 3).forEach(c => {
-          response += `- ${c.name}: $${c.spend.toFixed(0)} wasted\n`;
+    } else if (lastMessage.includes('wast') || (lastMessage.includes('keyword') && lastMessage.includes('budget'))) {
+      const wastedAmount = noConversions.reduce((sum, c) => sum + c.spend, 0);
+      response = `## Wasted Spend Analysis\n\n`;
+      if (noConversions.length > 0) {
+        response += `⚠️ **${noConversions.length} campaigns** have spend but NO conversions:\n\n`;
+        noConversions.forEach((c, i) => {
+          response += `${i + 1}. **${c.name}**: $${c.spend.toLocaleString()} spent\n`;
+        });
+        response += `\n**Total Potential Waste:** $${wastedAmount.toLocaleString()}\n\n`;
+        response += `**Recommendations:**\n- Review search terms reports\n- Add negative keywords\n- Consider pausing non-performers`;
+      } else {
+        response += `✅ All campaigns with spend have conversions. No immediate waste detected.`;
+      }
+    } else if (lastMessage.includes('best') || lastMessage.includes('top') || lastMessage.includes('performer')) {
+      response = `## Top Performing Campaigns\n\n`;
+      if (topPerformers.length > 0) {
+        response += `Ranked by lowest CPA (most efficient):\n\n`;
+        topPerformers.slice(0, 5).forEach((c, i) => {
+          response += `${i + 1}. **${c.name}**\n   - CPA: $${(c.spend / c.conversions).toFixed(2)}\n   - Conversions: ${c.conversions}\n   - Spend: $${c.spend.toLocaleString()}\n\n`;
+        });
+        response += `**Recommendation:** Consider increasing budget on top performers.`;
+      } else {
+        response += `No campaigns with conversions yet.`;
+      }
+    } else if (lastMessage.includes('cpa') || lastMessage.includes('cost per')) {
+      response = `## CPA Analysis\n\n**Average CPA:** $${avgCPA.toFixed(2)}\n\n`;
+      const withConversions = campaigns.filter(c => c.conversions > 0);
+      if (withConversions.length > 0) {
+        response += `**By Campaign:**\n`;
+        withConversions.sort((a, b) => (a.spend / a.conversions) - (b.spend / b.conversions)).forEach(c => {
+          const cpa = c.spend / c.conversions;
+          const indicator = cpa < avgCPA ? '✅' : cpa > avgCPA * 1.5 ? '⚠️' : '➖';
+          response += `${indicator} ${c.name}: $${cpa.toFixed(2)} (${c.conversions} conv)\n`;
         });
       }
+    } else if (lastMessage.includes('summary') || lastMessage.includes('overview')) {
+      response = `## Campaign Performance Summary\n\n`;
+      response += `- 📊 ${campaigns.length} campaigns (${campaigns.filter(c => c.status === 'ENABLED').length} active)\n`;
+      response += `- 💰 $${totalSpend.toLocaleString()} total spend\n`;
+      response += `- 🎯 ${totalConversions} conversions\n`;
+      response += `- 📈 $${avgCPA.toFixed(2)} average CPA\n`;
+      if (topPerformers.length > 0) {
+        response += `\n🏆 **Top Performer:** ${topPerformers[0].name}`;
+      }
+    } else if (lastMessage.includes('hello') || lastMessage.includes('hi')) {
+      response = `Hello! 👋 I have access to your **${campaigns.length} campaigns** ($${totalSpend.toLocaleString()} spend).\n\n**Try asking:**\n- "Show me campaigns with high spend but low conversions"\n- "What's my best performing campaign?"\n- "Give me a summary"`;
     } else {
-      response += `To see your campaign data, make sure your Google Ads account is connected.\n\n*Tip: Use the Tools menu to access Spend Shield for detailed waste analysis.*`;
+      response = `Based on your **${campaigns.length} campaigns**:\n\n- Total Spend: $${totalSpend.toLocaleString()}\n- Conversions: ${totalConversions}\n- Avg CPA: $${avgCPA.toFixed(2)}\n\n*Ask about specific campaigns, CPA, wasted spend, or top performers!*`;
     }
-  } else if (lastMessage.includes('keyword') || lastMessage.includes('wast')) {
-    response = `**Keyword Analysis:**\n\nTo identify wasting keywords, I recommend:\n\n1. **Check Search Terms Report** - Find irrelevant queries\n2. **Add Negative Keywords** - Block wasteful traffic\n3. **Use Spend Shield** - Our AI tool that automatically identifies wasters\n\n*Would you like me to analyze your search terms for potential negative keywords?*`;
-  } else if (lastMessage.includes('optimize') || lastMessage.includes('improve')) {
-    response = `**Quick Optimization Actions:**\n\n1. **Pause Low Performers** - Campaigns with high spend, low conversions\n2. **Scale Winners** - Increase budget on converting campaigns\n3. **Refine Keywords** - Add negatives to reduce waste\n4. **Improve Ads** - A/B test new headlines\n\n*Which area would you like to focus on?*`;
-  } else if (lastMessage.includes('hello') || lastMessage.includes('hi') || lastMessage.includes('hey')) {
-    response = `Hello! 👋 I'm your Insight Hub AI assistant.\n\nI can help you with:\n- **Campaign Analysis** - "Show me campaigns with high spend"\n- **Keyword Research** - "What keywords are wasting budget?"\n- **Optimization** - "How can I improve my ROAS?"\n- **Reporting** - "Give me a performance summary"\n\nWhat would you like to explore?`;
   } else {
-    response = `I understand you're asking about: "${messages[messages.length - 1]?.content}"\n\nAs your Insight Hub AI, I can help analyze:\n\n• **Google Ads** - Campaigns, keywords, spend\n• **Analytics** - Traffic, conversions, bounce rates\n• **Search Console** - Organic rankings, impressions\n• **Cross-platform insights** - Combined performance view\n\nWhat specific data would you like to explore?`;
+    response = `I don't see any campaign data loaded.\n\nPlease check that your Google Ads account is connected and try again.`;
   }
 
   // Stream response word by word
@@ -202,6 +328,6 @@ async function simulateResponse(
   for (let i = 0; i < words.length; i++) {
     const word = words[i] + (i < words.length - 1 ? ' ' : '');
     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: word })}\n\n`));
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await new Promise(resolve => setTimeout(resolve, 15));
   }
 }
