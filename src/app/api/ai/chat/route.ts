@@ -202,6 +202,8 @@ async function streamAnthropicResponse(
   });
 
   if (!response.ok) {
+    const errorText = await response.text();
+    console.error('[Chat] Anthropic API error:', response.status, errorText);
     throw new Error(`AI API error: ${response.status}`);
   }
 
