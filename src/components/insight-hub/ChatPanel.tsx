@@ -4,6 +4,7 @@ import { useInsightChat } from '@/hooks/useInsightChat';
 import { MCPStatusBar } from './MCPStatusBar';
 import { MessageList } from './MessageList';
 import { ChatInput } from './ChatInput';
+import { AccountSelector } from './AccountSelector';
 
 export function ChatPanel() {
   const {
@@ -14,10 +15,13 @@ export function ChatPanel() {
     mcpConnections,
     campaigns,
     isLoadingCampaigns,
+    accounts,
+    selectedAccountId,
     sendMessage,
     clearMessages,
     executeAction,
     refreshCampaigns,
+    selectAccount,
   } = useInsightChat();
 
   const handleConfigure = (type: string) => {
@@ -32,13 +36,26 @@ export function ChatPanel() {
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
-      {/* MCP Status Bar */}
-      <MCPStatusBar
-        connections={mcpConnections}
-        onConfigure={handleConfigure}
-        onRefresh={refreshCampaigns}
-        isRefreshing={isLoadingCampaigns}
-      />
+      {/* MCP Status Bar with Account Selector */}
+      <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50">
+        <MCPStatusBar
+          connections={mcpConnections}
+          onConfigure={handleConfigure}
+          onRefresh={refreshCampaigns}
+          isRefreshing={isLoadingCampaigns}
+        />
+        {accounts.length > 1 && (
+          <div className="pr-4 flex items-center gap-2">
+            <span className="text-xs text-gray-400">Account:</span>
+            <AccountSelector
+              accounts={accounts}
+              selectedAccountId={selectedAccountId}
+              onSelect={selectAccount}
+              isLoading={isLoadingCampaigns}
+            />
+          </div>
+        )}
+      </div>
 
       {/* Error banner */}
       {error && (

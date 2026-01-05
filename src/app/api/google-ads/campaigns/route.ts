@@ -39,6 +39,8 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const customerId = searchParams.get('customerId');
     const forceRefresh = searchParams.get('forceRefresh') === 'true';
+    // Use loginCustomerId from request, or fall back to env var
+    const loginCustomerId = searchParams.get('loginCustomerId') || process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
 
     // Demo mode - return demo data
     if (!customerId || customerId === 'demo') {
@@ -58,7 +60,7 @@ export async function GET(request: NextRequest) {
         const campaigns = await fetchCampaigns(
           session.refreshToken,
           customerId,
-          process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
+          loginCustomerId
         );
 
         return NextResponse.json({
@@ -114,7 +116,7 @@ export async function GET(request: NextRequest) {
           const campaigns = await fetchCampaigns(
             session.refreshToken,
             customerId,
-            process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
+            loginCustomerId
           );
 
           if (campaigns.length > 0) {

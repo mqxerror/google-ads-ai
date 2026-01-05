@@ -28,7 +28,7 @@ export function MCPStatusBar({ connections, onConfigure, onRefresh, isRefreshing
   const hasGoogleAds = connections.find(c => c.type === 'google_ads' && c.status === 'connected');
 
   return (
-    <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-200 overflow-x-auto">
+    <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 overflow-x-auto flex-1">
       <span className="text-xs font-medium text-gray-500 shrink-0">Connected MCPs:</span>
       <div className="flex items-center gap-2">
         {connections.map((conn) => (

@@ -48,6 +48,13 @@ export interface CampaignData {
   aiScore?: number;
 }
 
+export interface GoogleAdsAccount {
+  customerId: string;
+  descriptiveName: string;
+  currencyCode?: string;
+  manager?: boolean;
+}
+
 interface UseInsightChatReturn {
   messages: InsightMessage[];
   isLoading: boolean;
@@ -56,10 +63,13 @@ interface UseInsightChatReturn {
   mcpConnections: MCPConnection[];
   campaigns: CampaignData[];
   isLoadingCampaigns: boolean;
+  accounts: GoogleAdsAccount[];
+  selectedAccountId: string | null;
   sendMessage: (content: string) => Promise<void>;
   clearMessages: () => void;
   executeAction: (action: InsightAction) => Promise<void>;
   refreshCampaigns: () => Promise<void>;
+  selectAccount: (accountId: string) => Promise<void>;
 }
 
 const SUGGESTED_PROMPTS = [
@@ -82,7 +92,9 @@ export function useInsightChat(): UseInsightChatReturn {
   ]);
   const [campaigns, setCampaigns] = useState<CampaignData[]>([]);
   const [isLoadingCampaigns, setIsLoadingCampaigns] = useState(true);
+  const [accounts, setAccounts] = useState<GoogleAdsAccount[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [loginCustomerId, setLoginCustomerId] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const initializedRef = useRef(false);
 
@@ -100,7 +112,7 @@ export function useInsightChat(): UseInsightChatReturn {
     setIsLoadingCampaigns(true);
 
     try {
-      // First, get the account
+      // First, get the accounts
       const accountsRes = await fetch('/api/google-ads/accounts');
       const accountsData = await accountsRes.json();
 
@@ -123,30 +135,18 @@ export function useInsightChat(): UseInsightChatReturn {
         return;
       }
 
-      // Use first account
+      // Store all accounts
+      setAccounts(accountsData.accounts);
+      if (accountsData.loginCustomerId) {
+        setLoginCustomerId(accountsData.loginCustomerId);
+      }
+
+      // Use first account by default
       const account = accountsData.accounts[0];
       setSelectedAccountId(account.customerId);
 
       // Fetch campaigns for this account
-      const campaignsRes = await fetch(`/api/google-ads/campaigns?customerId=${account.customerId}`);
-      const campaignsData = await campaignsRes.json();
-
-      if (campaignsData.campaigns && campaignsData.campaigns.length > 0 && !campaignsData.isDemo) {
-        setCampaigns(campaignsData.campaigns);
-        setMcpConnections(prev => prev.map(c =>
-          c.type === 'google_ads'
-            ? { ...c, status: 'connected', lastSync: campaignsData.dataFreshness?.lastSyncedAt ? new Date(campaignsData.dataFreshness.lastSyncedAt) : undefined }
-            : c
-        ));
-        setWelcomeMessage(campaignsData.campaigns);
-      } else {
-        // Demo mode or no campaigns
-        setCampaigns(campaignsData.campaigns || []);
-        setMcpConnections(prev => prev.map(c =>
-          c.type === 'google_ads' ? { ...c, status: campaignsData.isDemo ? 'disconnected' : 'connected' } : c
-        ));
-        setWelcomeMessage(campaignsData.isDemo ? null : campaignsData.campaigns);
-      }
+      await fetchCampaignsForAccount(account.customerId, accountsData.loginCustomerId);
     } catch (err) {
       console.error('[InsightChat] Failed to fetch campaigns:', err);
       setMcpConnections(prev => prev.map(c =>
@@ -158,11 +158,66 @@ export function useInsightChat(): UseInsightChatReturn {
     }
   };
 
+  const fetchCampaignsForAccount = async (accountId: string, mccId?: string | null) => {
+    setIsLoadingCampaigns(true);
+    try {
+      const url = mccId
+        ? `/api/google-ads/campaigns?customerId=${accountId}&loginCustomerId=${mccId}`
+        : `/api/google-ads/campaigns?customerId=${accountId}`;
+
+      const campaignsRes = await fetch(url);
+      const campaignsData = await campaignsRes.json();
+
+      if (campaignsData.campaigns && campaignsData.campaigns.length > 0 && !campaignsData.isDemo) {
+        setCampaigns(campaignsData.campaigns);
+        setMcpConnections(prev => prev.map(c =>
+          c.type === 'google_ads'
+            ? { ...c, status: 'connected', lastSync: campaignsData.dataFreshness?.lastSyncedAt ? new Date(campaignsData.dataFreshness.lastSyncedAt) : undefined }
+            : c
+        ));
+        setWelcomeMessage(campaignsData.campaigns);
+      } else {
+        // No campaigns or demo mode
+        setCampaigns(campaignsData.campaigns || []);
+        setMcpConnections(prev => prev.map(c =>
+          c.type === 'google_ads' ? { ...c, status: campaignsData.isDemo ? 'disconnected' : 'connected' } : c
+        ));
+        setWelcomeMessage(campaignsData.isDemo ? null : campaignsData.campaigns);
+      }
+    } catch (err) {
+      console.error('[InsightChat] Failed to fetch campaigns:', err);
+      setCampaigns([]);
+    } finally {
+      setIsLoadingCampaigns(false);
+    }
+  };
+
+  const selectAccount = async (accountId: string) => {
+    if (accountId === selectedAccountId) return;
+
+    setSelectedAccountId(accountId);
+    const account = accounts.find(a => a.customerId === accountId);
+
+    // Add system message about account switch
+    setMessages(prev => [...prev, {
+      id: generateId(),
+      role: 'system',
+      content: `Switched to account: **${account?.descriptiveName || accountId}**`,
+      timestamp: new Date(),
+    }]);
+
+    await fetchCampaignsForAccount(accountId, loginCustomerId);
+  };
+
   const refreshCampaigns = async () => {
     if (selectedAccountId) {
       setIsLoadingCampaigns(true);
       try {
-        const res = await fetch(`/api/google-ads/campaigns?customerId=${selectedAccountId}&forceRefresh=true`);
+        const url = loginCustomerId
+          ? `/api/google-ads/campaigns?customerId=${selectedAccountId}&loginCustomerId=${loginCustomerId}&forceRefresh=true`
+          : `/api/google-ads/campaigns?customerId=${selectedAccountId}&forceRefresh=true`;
+
+        const res = await fetch(url);
         const data = await res.json();
         if (data.campaigns) {
           setCampaigns(data.campaigns);
@@ -426,10 +481,13 @@ I can help you:
     mcpConnections,
     campaigns,
     isLoadingCampaigns,
+    accounts,
+    selectedAccountId,
     sendMessage,
     clearMessages,
     executeAction,
     refreshCampaigns,
+    selectAccount,
   };
 }
 
