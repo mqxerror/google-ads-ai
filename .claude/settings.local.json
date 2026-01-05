@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(npx bmad-method@alpha install)",
+      "Bash(npx bmad-method@alpha install:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm install:*)",
+      "Bash(node tools/cli/bin/bmad-cli.js install:*)",
+      "Bash(node tools/cli/bmad-cli.js install:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm run lint)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npx kill-port:*)",
+      "Bash(curl:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run build:*)",
+      "Bash(cat:*)",
+      "WebFetch(domain:localhost)",
+      "Bash(ls:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "mcp__puppeteer-mcp-claude__puppeteer_launch",
+      "mcp__puppeteer-mcp-claude__puppeteer_new_page",
+      "mcp__puppeteer-mcp-claude__puppeteer_navigate",
+      "mcp__puppeteer-mcp-claude__puppeteer_screenshot",
+      "mcp__puppeteer-mcp-claude__puppeteer_type",
+      "mcp__puppeteer-mcp-claude__puppeteer_click",
+      "mcp__puppeteer-mcp-claude__puppeteer_wait_for_selector",
+      "mcp__puppeteer-mcp-claude__puppeteer_evaluate",
+      "mcp__puppeteer-mcp-claude__puppeteer_close_browser",
+      "mcp__plugin_context7_context7__query-docs",
+      "mcp__plugin_context7_context7__resolve-library-id"
+    ]
+  }
+}
