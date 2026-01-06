@@ -39,11 +39,15 @@ function getWasteLevel(savings: number, totalSpend: number): { level: 'none' | '
 }
 
 export default function KPICards({ onKPIClick }: KPICardsProps) {
-  const { totalSpend, totalConversions, avgScore, potentialSavings, wasterCount } = useDashboardStats();
+  const { totalSpend, totalConversions, avgScore, potentialSavings, wasterCount, activeCampaignCount, campaignCount } = useDashboardStats();
+  const campaigns = useCampaignsStore((state) => state.campaigns);
   const loading = useCampaignsStore((state) => state.loading);
   const lastFetchedAt = useCampaignsStore((state) => state.lastFetchedAt);
 
   const wasteStatus = getWasteLevel(potentialSavings, totalSpend);
+
+  // Calculate real CPA
+  const avgCPA = totalConversions > 0 ? totalSpend / totalConversions : 0;
 
   // Format last scan time
   const lastScanText = lastFetchedAt
@@ -55,10 +59,8 @@ export default function KPICards({ onKPIClick }: KPICardsProps) {
     label: string;
     value: string;
     isAccent?: boolean;
-    change?: string;
-    changePositive?: boolean;
-    badge?: string;
     subtext?: string;
+    badge?: string;
     isWaste?: boolean;
     wasteLevel?: 'none' | 'low' | 'medium' | 'high';
     highlight?: boolean;
@@ -67,21 +69,20 @@ export default function KPICards({ onKPIClick }: KPICardsProps) {
       type: 'spend',
       label: 'Total Spend',
       value: `$${formatNumber(totalSpend)}`,
+      subtext: `${activeCampaignCount} active campaigns`,
       isAccent: true,
     },
     {
       type: 'conversions',
       label: 'Conversions',
       value: formatNumber(totalConversions),
-      change: '+8.4%',
-      changePositive: true,
+      subtext: avgCPA > 0 ? `CPA: $${formatNumber(avgCPA)}` : 'No conversions yet',
     },
     {
       type: 'score',
       label: 'Avg AI Score',
       value: avgScore.toString(),
-      change: avgScore >= 60 ? '+5 pts' : '-3 pts',
-      changePositive: avgScore >= 60,
+      subtext: `${wasterCount} need attention`,
       badge: avgScore >= 70 ? '🟢' : avgScore >= 40 ? '🟡' : '🔴',
     },
     {
@@ -138,17 +139,12 @@ export default function KPICards({ onKPIClick }: KPICardsProps) {
             }`}>
               {kpi.value}
             </span>
-            {kpi.subtext && (
-              <span className={`text-xs ${kpi.isAccent ? 'text-white/70' : 'text-text3'}`}>
-                {kpi.subtext}
-              </span>
-            )}
-            {kpi.change && (
-              <span className={`text-sm ${kpi.changePositive ? 'text-success' : 'text-danger'}`}>
-                {kpi.change}
-              </span>
-            )}
           </div>
+          {kpi.subtext && (
+            <p className={`text-xs mt-1 ${kpi.isAccent ? 'text-white/70' : 'text-text3'}`}>
+              {kpi.subtext}
+            </p>
+          )}
           {onKPIClick && (
             <div className={`mt-2 text-xs ${kpi.isAccent ? 'text-white/50' : 'text-text3'}`}>
               Click for details →
