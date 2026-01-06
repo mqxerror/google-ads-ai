@@ -239,7 +239,9 @@ export async function fetchCampaigns(
   }
 
   try {
-    const campaigns = await customer.query(`
+    // Query returns one row per campaign per day when using segments.date
+    // We need to aggregate the metrics across all days
+    const rawResults = await customer.query(`
       SELECT
         campaign.id,
         campaign.name,
@@ -249,53 +251,100 @@ export async function fetchCampaigns(
         metrics.clicks,
         metrics.cost_micros,
         metrics.conversions,
-        metrics.conversions_value,
-        metrics.ctr,
-        metrics.average_cpc
+        metrics.conversions_value
       FROM campaign
       WHERE campaign.status != 'REMOVED'
         ${dateClause}
-      ORDER BY metrics.cost_micros DESC
     `);
 
-    return campaigns.map((row) => {
-      const spend = (row.metrics?.cost_micros || 0) / 1_000_000;
-      const conversions = row.metrics?.conversions || 0;
-      const clicks = row.metrics?.clicks || 0;
-      const impressions = row.metrics?.impressions || 0;
-      const ctr = row.metrics?.ctr ? row.metrics.ctr * 100 : (impressions > 0 ? (clicks / impressions) * 100 : 0);
-      const cpa = conversions > 0 ? spend / conversions : 0;
-      const roas = spend > 0 ? (row.metrics?.conversions_value || 0) / spend : 0;
-      const campaignType = mapCampaignType(row.campaign?.advertising_channel_type) as CampaignType;
+    console.log(`[Google Ads] Raw query returned ${rawResults.length} rows for date range`);
 
-      const aiScoreBreakdown = calculateAIScoreWithBreakdown({
-        spend,
-        clicks,
-        impressions,
-        conversions,
-        ctr,
-        cpa,
-        roas,
-        type: campaignType,
-      });
+    // Aggregate metrics by campaign ID
+    const campaignMap = new Map<string, {
+      id: string;
+      name: string;
+      status: unknown;
+      type: unknown;
+      costMicros: number;
+      clicks: number;
+      impressions: number;
+      conversions: number;
+      conversionsValue: number;
+    }>();
 
-      return {
-        id: row.campaign?.id?.toString() || '',
-        name: row.campaign?.name || '',
-        status: mapStatus(row.campaign?.status),
-        type: campaignType,
-        spend,
-        clicks,
-        impressions,
-        conversions,
-        ctr,
-        cpa,
-        roas,
-        aiScore: aiScoreBreakdown.totalScore,
-        aiScoreBreakdown,
-        aiRecommendation: aiScoreBreakdown.topIssue,
-      };
-    });
+    for (const row of rawResults) {
+      const id = row.campaign?.id?.toString() || '';
+      if (!id) continue;
+
+      const existing = campaignMap.get(id);
+      if (existing) {
+        // Aggregate metrics
+        existing.costMicros += row.metrics?.cost_micros || 0;
+        existing.clicks += row.metrics?.clicks || 0;
+        existing.impressions += row.metrics?.impressions || 0;
+        existing.conversions += row.metrics?.conversions || 0;
+        existing.conversionsValue += row.metrics?.conversions_value || 0;
+      } else {
+        // First occurrence of this campaign
+        campaignMap.set(id, {
+          id,
+          name: row.campaign?.name || '',
+          status: row.campaign?.status,
+          type: row.campaign?.advertising_channel_type,
+          costMicros: row.metrics?.cost_micros || 0,
+          clicks: row.metrics?.clicks || 0,
+          impressions: row.metrics?.impressions || 0,
+          conversions: row.metrics?.conversions || 0,
+          conversionsValue: row.metrics?.conversions_value || 0,
+        });
+      }
+    }
+
+    console.log(`[Google Ads] Aggregated to ${campaignMap.size} unique campaigns`);
+
+    // Convert aggregated data to campaign objects
+    const campaigns = Array.from(campaignMap.values())
+      .map((c) => {
+        const spend = c.costMicros / 1_000_000;
+        const conversions = c.conversions;
+        const clicks = c.clicks;
+        const impressions = c.impressions;
+        const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+        const cpa = conversions > 0 ? spend / conversions : 0;
+        const roas = spend > 0 ? c.conversionsValue / spend : 0;
+        const campaignType = mapCampaignType(c.type) as CampaignType;
+
+        const aiScoreBreakdown = calculateAIScoreWithBreakdown({
+          spend,
+          clicks,
+          impressions,
+          conversions,
+          ctr,
+          cpa,
+          roas,
+          type: campaignType,
+        });
+
+        return {
+          id: c.id,
+          name: c.name,
+          status: mapStatus(c.status),
+          type: campaignType,
+          spend,
+          clicks,
+          impressions,
+          conversions,
+          ctr,
+          cpa,
+          roas,
+          aiScore: aiScoreBreakdown.totalScore,
+          aiScoreBreakdown,
+          aiRecommendation: aiScoreBreakdown.topIssue,
+        };
+      })
+      .sort((a, b) => b.spend - a.spend); // Sort by spend descending
+
+    return campaigns;
   } catch (error) {
     console.error('Error fetching campaigns:', error);
     throw error;
