@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { DEFAULT_MODELS, ANTHROPIC_CONFIG } from '@/lib/ai-config';
 
 interface CampaignData {
   id: string;
@@ -185,16 +186,16 @@ async function streamAnthropicResponse(
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder
 ) {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetch(ANTHROPIC_CONFIG.baseUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
+      'anthropic-version': ANTHROPIC_CONFIG.version,
     },
     body: JSON.stringify({
-      model: 'claude-3-5-haiku-latest',
-      max_tokens: 1024,
+      model: DEFAULT_MODELS.INSIGHT_HUB_CHAT,
+      max_tokens: ANTHROPIC_CONFIG.defaultMaxTokens,
       system: systemPrompt,
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       stream: true,
