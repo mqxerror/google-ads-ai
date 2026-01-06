@@ -12,6 +12,8 @@ import KPICards from '@/components/dashboard/KPICards';
 import QuickActionsBar from '@/components/dashboard/QuickActionsBar';
 import DrilldownContainer from '@/components/dashboard/DrilldownContainer';
 import ActivityHistory from '@/components/dashboard/ActivityHistory';
+import DiagnosticSpendChart from '@/components/dashboard/DiagnosticSpendChart';
+import ScoreBreakdownDrawer from '@/components/dashboard/ScoreBreakdownDrawer';
 import CommandPalette from '@/components/CommandPalette';
 
 export default function Home() {
@@ -23,6 +25,7 @@ export default function Home() {
   const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [showWhatIf, setShowWhatIf] = useState(false);
+  const [showScoreBreakdown, setShowScoreBreakdown] = useState(false);
   const [showNegativeKeywords, setShowNegativeKeywords] = useState(false);
 
   // Store state
@@ -45,22 +48,11 @@ export default function Home() {
     fetchCampaigns(customerId, true);
   };
 
-  // Handle score click
+  // Handle score click - opens the score breakdown drawer
   const handleScoreClick = (campaign: Campaign) => {
     setSelectedCampaign(campaign);
-    setShowWhatIf(true);
+    setShowScoreBreakdown(true);
   };
-
-  // Monthly chart data
-  const monthlyData = [
-    { month: 'Jul', spend: 8200, change: 12 },
-    { month: 'Aug', spend: 9100, change: 18 },
-    { month: 'Sep', spend: 7800, change: -8 },
-    { month: 'Oct', spend: 11200, change: 24 },
-    { month: 'Nov', spend: 10500, change: 15 },
-    { month: 'Dec', spend: totalSpend, change: 8 },
-  ];
-  const maxSpend = Math.max(...monthlyData.map(d => d.spend));
 
   return (
     <div className="min-h-screen bg-bg">
@@ -221,29 +213,8 @@ export default function Home() {
         {/* Quick Actions Bar - Pause Wasters prominent! */}
         <QuickActionsBar onShowNegativeKeywords={() => setShowNegativeKeywords(true)} />
 
-        {/* Monthly Chart */}
-        <div className="card p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="font-semibold text-text">Monthly Spend</h3>
-              <p className="text-sm text-text3">${totalSpend.toLocaleString()} total this period</p>
-            </div>
-          </div>
-          <div className="flex items-end gap-3 h-48">
-            {monthlyData.map((d, i) => (
-              <div key={i} className="flex-1 flex flex-col items-center gap-2">
-                <span className={`text-xs font-medium ${d.change >= 0 ? 'text-success' : 'text-danger'}`}>
-                  {d.change >= 0 ? '+' : ''}{d.change}%
-                </span>
-                <div
-                  className={`w-full rounded-t-lg transition-all ${i === monthlyData.length - 1 ? 'bg-accent' : 'bg-surface2'}`}
-                  style={{ height: `${(d.spend / maxSpend) * 100}%` }}
-                />
-                <span className="text-xs text-text3">{d.month}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+        {/* Diagnostic Spend Chart */}
+        <DiagnosticSpendChart monthlyBudget={totalSpend * 2.5} />
 
         {/* Campaign Table with inline editing + Activity History */}
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
@@ -264,6 +235,13 @@ export default function Home() {
           onClose={() => { setShowWhatIf(false); setSelectedCampaign(null); }}
         />
       )}
+
+      {/* Score Breakdown Drawer */}
+      <ScoreBreakdownDrawer
+        campaign={selectedCampaign}
+        isOpen={showScoreBreakdown}
+        onClose={() => { setShowScoreBreakdown(false); setSelectedCampaign(null); }}
+      />
 
       {/* Negative Keywords Panel */}
       <NegativeKeywordsPanel
