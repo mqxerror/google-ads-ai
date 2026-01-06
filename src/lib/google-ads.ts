@@ -779,12 +779,18 @@ function mapStatus(status: unknown): 'ENABLED' | 'PAUSED' | 'REMOVED' {
 }
 
 function mapCampaignType(type: unknown): string {
+  // Google Ads AdvertisingChannelTypeEnum values:
+  // 0=UNSPECIFIED, 1=UNKNOWN, 2=SEARCH, 3=DISPLAY, 4=SHOPPING,
+  // 5=HOTEL, 6=VIDEO, 7=MULTI_CHANNEL, 8=LOCAL, 9=SMART,
+  // 10=PERFORMANCE_MAX, 11=LOCAL_SERVICES, 12=DISCOVERY/DEMAND_GEN
   if (type === 2 || type === 'SEARCH') return 'SEARCH';
   if (type === 3 || type === 'DISPLAY') return 'DISPLAY';
   if (type === 4 || type === 'SHOPPING') return 'SHOPPING';
   if (type === 6 || type === 'VIDEO') return 'VIDEO';
-  if (type === 9 || type === 'PERFORMANCE_MAX') return 'PERFORMANCE_MAX';
-  if (type === 12 || type === 'DEMAND_GEN') return 'DEMAND_GEN';
+  if (type === 10 || type === 'PERFORMANCE_MAX') return 'PERFORMANCE_MAX';
+  if (type === 9 || type === 'SMART') return 'SMART';
+  if (type === 12 || type === 'DISCOVERY' || type === 'DEMAND_GEN') return 'DEMAND_GEN';
+  console.log('[mapCampaignType] Unknown type:', type);
   return 'SEARCH';
 }
 

@@ -3,7 +3,7 @@
 // ============================================
 
 // Core Enums
-export type CampaignType = 'SEARCH' | 'DISPLAY' | 'PMAX' | 'DEMAND_GEN' | 'VIDEO' | 'PERFORMANCE_MAX' | 'SHOPPING' | 'APP';
+export type CampaignType = 'SEARCH' | 'DISPLAY' | 'PMAX' | 'DEMAND_GEN' | 'VIDEO' | 'PERFORMANCE_MAX' | 'SHOPPING' | 'APP' | 'SMART';
 export type CampaignStatus = 'DRAFT' | 'PENDING' | 'ENABLED' | 'ACTIVE' | 'PAUSED' | 'REMOVED';
 export type BiddingStrategy = 'MANUAL_CPC' | 'MAXIMIZE_CONVERSIONS' | 'MAXIMIZE_CLICKS' | 'TARGET_CPA' | 'TARGET_ROAS' | 'MAXIMIZE_CONVERSION_VALUE';
 export type MatchType = 'BROAD' | 'PHRASE' | 'EXACT';
