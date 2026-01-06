@@ -3,6 +3,12 @@
 import { useDashboardStats } from '@/hooks/useCampaigns';
 import { useCampaignsStore } from '@/stores/campaigns-store';
 
+export type KPIType = 'spend' | 'conversions' | 'score' | 'waste';
+
+interface KPICardsProps {
+  onKPIClick?: (type: KPIType) => void;
+}
+
 // Format large numbers nicely
 function formatNumber(num: number): string {
   if (num >= 1000000) {
@@ -32,7 +38,7 @@ function getWasteLevel(savings: number, totalSpend: number): { level: 'none' | '
   return { level: 'high', label: 'High' };
 }
 
-export default function KPICards() {
+export default function KPICards({ onKPIClick }: KPICardsProps) {
   const { totalSpend, totalConversions, avgScore, potentialSavings, wasterCount } = useDashboardStats();
   const loading = useCampaignsStore((state) => state.loading);
   const lastFetchedAt = useCampaignsStore((state) => state.lastFetchedAt);
@@ -44,19 +50,34 @@ export default function KPICards() {
     ? `Last scan: ${new Date(lastFetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
     : 'Not yet scanned';
 
-  const kpis = [
+  const kpis: Array<{
+    type: KPIType;
+    label: string;
+    value: string;
+    isAccent?: boolean;
+    change?: string;
+    changePositive?: boolean;
+    badge?: string;
+    subtext?: string;
+    isWaste?: boolean;
+    wasteLevel?: 'none' | 'low' | 'medium' | 'high';
+    highlight?: boolean;
+  }> = [
     {
+      type: 'spend',
       label: 'Total Spend',
       value: `$${formatNumber(totalSpend)}`,
       isAccent: true,
     },
     {
+      type: 'conversions',
       label: 'Conversions',
       value: formatNumber(totalConversions),
       change: '+8.4%',
       changePositive: true,
     },
     {
+      type: 'score',
       label: 'Avg AI Score',
       value: avgScore.toString(),
       change: avgScore >= 60 ? '+5 pts' : '-3 pts',
@@ -64,6 +85,7 @@ export default function KPICards() {
       badge: avgScore >= 70 ? '🟢' : avgScore >= 40 ? '🟡' : '🔴',
     },
     {
+      type: 'waste',
       label: 'Waste Detected',
       value: wasteStatus.label,
       subtext: potentialSavings > 0 ? `~$${formatNumber(potentialSavings)}/mo` : lastScanText,
@@ -89,9 +111,10 @@ export default function KPICards() {
   return (
     <div className="grid grid-cols-4 gap-4">
       {kpis.map((kpi, i) => (
-        <div
+        <button
           key={i}
-          className={`p-5 rounded-xl ${kpi.isAccent ? 'card-accent' : 'card'} ${kpi.highlight ? 'ring-2 ring-danger/50' : ''}`}
+          onClick={() => onKPIClick?.(kpi.type)}
+          className={`p-5 rounded-xl text-left transition-all ${kpi.isAccent ? 'card-accent' : 'card'} ${kpi.highlight ? 'ring-2 ring-danger/50' : ''} ${onKPIClick ? 'hover:scale-[1.02] hover:shadow-lg cursor-pointer' : ''}`}
         >
           <div className="flex items-center justify-between mb-1">
             <span className={`text-sm ${kpi.isAccent ? 'text-white/80' : 'text-text3'}`}>{kpi.label}</span>
@@ -126,7 +149,12 @@ export default function KPICards() {
               </span>
             )}
           </div>
-        </div>
+          {onKPIClick && (
+            <div className={`mt-2 text-xs ${kpi.isAccent ? 'text-white/50' : 'text-text3'}`}>
+              Click for details →
+            </div>
+          )}
+        </button>
       ))}
     </div>
   );

@@ -247,16 +247,17 @@ export async function syncCampaignData(options: SyncOptions): Promise<SyncResult
     for (const campaign of campaigns) {
       // Upsert campaign
       const campaignResult = await client.query(
-        `INSERT INTO campaigns (account_id, google_campaign_id, name, status, campaign_type)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO campaigns (account_id, google_campaign_id, name, status, campaign_type, daily_budget)
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (account_id, google_campaign_id)
          DO UPDATE SET
            name = $3,
            status = $4,
            campaign_type = $5,
+           daily_budget = $6,
            updated_at = NOW()
          RETURNING id`,
-        [dbAccountId, campaign.id, campaign.name, campaign.status, campaign.type]
+        [dbAccountId, campaign.id, campaign.name, campaign.status, campaign.type, campaign.dailyBudget || 0]
       );
 
       const campaignId = campaignResult.rows[0].id;
@@ -381,6 +382,7 @@ export async function getCampaignsFromDB(
          c.name,
          c.status,
          c.campaign_type,
+         c.daily_budget,
          ca.total_spend as spend,
          ca.total_clicks as clicks,
          ca.total_impressions as impressions,
@@ -405,6 +407,7 @@ export async function getCampaignsFromDB(
       name: row.name,
       status: row.status,
       type: row.campaign_type,
+      dailyBudget: parseFloat(row.daily_budget) || 0,
       spend: parseFloat(row.spend) || 0,
       clicks: parseInt(row.clicks) || 0,
       impressions: parseInt(row.impressions) || 0,

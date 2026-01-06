@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import { useInsightChat } from '@/hooks/useInsightChat';
 import { MCPStatusBar } from './MCPStatusBar';
 import { MessageList } from './MessageList';
@@ -7,7 +8,14 @@ import { ChatInput } from './ChatInput';
 import { AccountSelector } from './AccountSelector';
 import { DateRangePicker } from './DateRangePicker';
 
-export function ChatPanel() {
+interface ChatPanelProps {
+  initialQuery?: string;
+  contextView?: string;
+  campaignId?: string;
+}
+
+export function ChatPanel({ initialQuery, contextView, campaignId }: ChatPanelProps) {
+  const initialQuerySentRef = useRef(false);
   const {
     messages,
     isLoading,
@@ -36,6 +44,19 @@ export function ChatPanel() {
       console.log('Configure MCP:', type);
     }
   };
+
+  // Auto-send initial query when campaigns are loaded
+  useEffect(() => {
+    if (initialQuery && !isLoadingCampaigns && campaigns.length > 0 && !initialQuerySentRef.current) {
+      initialQuerySentRef.current = true;
+      // Add context prefix if we have view context
+      let queryWithContext = initialQuery;
+      if (contextView) {
+        queryWithContext = `[Context: ${contextView.replace('_', ' ')}] ${initialQuery}`;
+      }
+      sendMessage(queryWithContext);
+    }
+  }, [initialQuery, contextView, isLoadingCampaigns, campaigns.length, sendMessage]);
 
   return (
     <div className="flex flex-col h-full bg-gray-50">

@@ -8,13 +8,15 @@ import WhatIfDrawer from '@/components/WhatIfDrawer';
 import NegativeKeywordsPanel from '@/components/NegativeKeywordsPanel';
 import { useCampaigns, useDashboardStats } from '@/hooks/useCampaigns';
 import { useCampaignsStore } from '@/stores/campaigns-store';
-import KPICards from '@/components/dashboard/KPICards';
+import KPICards, { KPIType } from '@/components/dashboard/KPICards';
+import KPIDetailDrawer from '@/components/dashboard/KPIDetailDrawer';
 import QuickActionsBar from '@/components/dashboard/QuickActionsBar';
 import DrilldownContainer from '@/components/dashboard/DrilldownContainer';
 import ActivityHistory from '@/components/dashboard/ActivityHistory';
 import DiagnosticSpendChart from '@/components/dashboard/DiagnosticSpendChart';
 import ScoreBreakdownDrawer from '@/components/dashboard/ScoreBreakdownDrawer';
 import CommandPalette from '@/components/CommandPalette';
+import ContextualAIPanel from '@/components/dashboard/ContextualAIPanel';
 
 export default function Home() {
   const { data: session, status } = useSession();
@@ -27,6 +29,7 @@ export default function Home() {
   const [showWhatIf, setShowWhatIf] = useState(false);
   const [showScoreBreakdown, setShowScoreBreakdown] = useState(false);
   const [showNegativeKeywords, setShowNegativeKeywords] = useState(false);
+  const [kpiDrawerType, setKpiDrawerType] = useState<KPIType | null>(null);
 
   // Store state
   const { customerId, setCustomerId, isDemo, syncing, fetchCampaigns, hydrateWasterThreshold } = useCampaignsStore();
@@ -208,7 +211,7 @@ export default function Home() {
       {/* Main Content */}
       <main className="max-w-[1600px] mx-auto px-6 py-6 space-y-6">
         {/* KPI Cards */}
-        <KPICards />
+        <KPICards onKPIClick={setKpiDrawerType} />
 
         {/* Quick Actions Bar - Pause Wasters prominent! */}
         <QuickActionsBar onShowNegativeKeywords={() => setShowNegativeKeywords(true)} />
@@ -216,12 +219,13 @@ export default function Home() {
         {/* Diagnostic Spend Chart */}
         <DiagnosticSpendChart />
 
-        {/* Campaign Table with inline editing + Activity History */}
+        {/* Campaign Table with inline editing + Sidebar */}
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
           <div className="xl:col-span-3">
             <DrilldownContainer onScoreClick={handleScoreClick} />
           </div>
-          <div className="xl:col-span-1">
+          <div className="xl:col-span-1 space-y-6">
+            <ContextualAIPanel context={{ view: 'dashboard' }} />
             <ActivityHistory />
           </div>
         </div>
@@ -252,6 +256,13 @@ export default function Home() {
 
       {/* Command Palette - Cmd+K */}
       <CommandPalette />
+
+      {/* KPI Detail Drawer */}
+      <KPIDetailDrawer
+        type={kpiDrawerType}
+        isOpen={kpiDrawerType !== null}
+        onClose={() => setKpiDrawerType(null)}
+      />
     </div>
   );
 }

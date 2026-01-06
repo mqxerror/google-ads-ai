@@ -1,11 +1,19 @@
 'use client';
 
 import { useSession } from 'next-auth/react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { ChatPanel } from '@/components/insight-hub';
+import { Suspense } from 'react';
 
-export default function InsightHubPage() {
+function InsightHubContent() {
   const { data: session, status } = useSession();
+  const searchParams = useSearchParams();
+
+  // Get context from URL params
+  const initialQuery = searchParams.get('q') || undefined;
+  const contextView = searchParams.get('ctx') || undefined;
+  const campaignId = searchParams.get('cid') || undefined;
 
   if (status === 'loading') {
     return (
@@ -100,7 +108,7 @@ export default function InsightHubPage() {
       {/* Main content */}
       <main className="flex-1 flex flex-col max-w-5xl mx-auto w-full">
         <div className="flex-1 flex flex-col bg-white shadow-sm my-4 mx-4 rounded-xl overflow-hidden border border-gray-200">
-          <ChatPanel />
+          <ChatPanel initialQuery={initialQuery} contextView={contextView} campaignId={campaignId} />
         </div>
       </main>
 
@@ -117,5 +125,20 @@ export default function InsightHubPage() {
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function InsightHubPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
+          <p className="text-gray-500 text-sm">Loading Insight Hub...</p>
+        </div>
+      </div>
+    }>
+      <InsightHubContent />
+    </Suspense>
   );
 }
