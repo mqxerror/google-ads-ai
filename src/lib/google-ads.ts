@@ -431,6 +431,107 @@ export async function fetchAdGroups(
   }
 }
 
+// Fetch keywords for an ad group with metrics
+export async function fetchAdGroupKeywords(
+  refreshToken: string,
+  customerId: string,
+  campaignId: string,
+  adGroupId: string,
+  startDate: string,
+  endDate: string,
+  loginCustomerId?: string
+) {
+  const client = createGoogleAdsClient();
+  const customer = getCustomer(client, customerId, refreshToken, loginCustomerId);
+
+  try {
+    const query = `
+      SELECT
+        ad_group_criterion.criterion_id,
+        ad_group_criterion.keyword.text,
+        ad_group_criterion.keyword.match_type,
+        ad_group_criterion.status,
+        ad_group_criterion.quality_info.quality_score,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.conversions,
+        metrics.cost_micros,
+        metrics.average_cpc
+      FROM keyword_view
+      WHERE ad_group.id = ${adGroupId}
+        AND campaign.id = ${campaignId}
+        AND ad_group_criterion.status != 'REMOVED'
+        AND segments.date BETWEEN '${startDate}' AND '${endDate}'
+      ORDER BY metrics.cost_micros DESC
+    `;
+
+    const results = await customer.query(query);
+
+    // Aggregate metrics by keyword (query returns per-day rows)
+    const keywordMap = new Map<string, {
+      id: string;
+      keyword: string;
+      matchType: string;
+      status: string;
+      qualityScore: number | null;
+      impressions: number;
+      clicks: number;
+      conversions: number;
+      costMicros: number;
+    }>();
+
+    for (const row of results) {
+      const id = row.ad_group_criterion?.criterion_id?.toString() || '';
+      if (!id) continue;
+
+      const existing = keywordMap.get(id);
+      if (existing) {
+        existing.impressions += row.metrics?.impressions || 0;
+        existing.clicks += row.metrics?.clicks || 0;
+        existing.conversions += row.metrics?.conversions || 0;
+        existing.costMicros += row.metrics?.cost_micros || 0;
+      } else {
+        keywordMap.set(id, {
+          id,
+          keyword: row.ad_group_criterion?.keyword?.text || '',
+          matchType: String(row.ad_group_criterion?.keyword?.match_type || 'BROAD'),
+          status: mapStatus(row.ad_group_criterion?.status),
+          qualityScore: row.ad_group_criterion?.quality_info?.quality_score || null,
+          impressions: row.metrics?.impressions || 0,
+          clicks: row.metrics?.clicks || 0,
+          conversions: row.metrics?.conversions || 0,
+          costMicros: row.metrics?.cost_micros || 0,
+        });
+      }
+    }
+
+    return Array.from(keywordMap.values()).map(kw => {
+      const spend = kw.costMicros / 1_000_000;
+      const ctr = kw.impressions > 0 ? (kw.clicks / kw.impressions) * 100 : 0;
+      const cpa = kw.conversions > 0 ? spend / kw.conversions : 0;
+
+      return {
+        id: kw.id,
+        keyword: kw.keyword,
+        matchType: kw.matchType,
+        status: kw.status,
+        qualityScore: kw.qualityScore,
+        impressions: kw.impressions,
+        clicks: kw.clicks,
+        conversions: kw.conversions,
+        spend,
+        ctr,
+        cpa,
+        adGroupId,
+        campaignId,
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching ad group keywords:', error);
+    throw error;
+  }
+}
+
 // Update campaign status
 export async function updateCampaignStatus(
   refreshToken: string,

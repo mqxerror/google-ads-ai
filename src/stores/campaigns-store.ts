@@ -28,6 +28,37 @@ export interface Activity {
   timestamp: number;
 }
 
+export interface AdGroup {
+  id: string;
+  campaignId: string;
+  name: string;
+  status: 'ENABLED' | 'PAUSED' | 'REMOVED';
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  spend: number;
+  ctr: number;
+  cpa: number;
+}
+
+export interface Keyword {
+  id: string;
+  adGroupId: string;
+  campaignId: string;
+  keyword: string;
+  matchType: string;
+  status: 'ENABLED' | 'PAUSED' | 'REMOVED';
+  qualityScore: number | null;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  spend: number;
+  ctr: number;
+  cpa: number;
+}
+
+export type DrilldownLevel = 'campaigns' | 'adGroups' | 'keywords';
+
 interface CampaignsState {
   // Data
   campaigns: Campaign[];
@@ -35,6 +66,15 @@ interface CampaignsState {
   activities: Activity[];
   customerId: string;
   isDemo: boolean;
+
+  // Drill-down navigation
+  drilldownLevel: DrilldownLevel;
+  selectedCampaign: Campaign | null;
+  selectedAdGroup: AdGroup | null;
+  adGroups: AdGroup[];
+  keywords: Keyword[];
+  adGroupsLoading: boolean;
+  keywordsLoading: boolean;
 
   // User settings
   wasterThreshold: number; // AI score below this = waster
@@ -63,6 +103,12 @@ interface CampaignsState {
   hydrateWasterThreshold: () => void; // Load from localStorage after mount
   addActivity: (activity: Omit<Activity, 'id' | 'timestamp'>) => void;
 
+  // Drill-down actions
+  drillIntoCampaign: (campaign: Campaign) => Promise<void>;
+  drillIntoAdGroup: (adGroup: AdGroup) => Promise<void>;
+  goBack: () => void;
+  resetDrilldown: () => void;
+
   // Cache-aware fetch
   fetchCampaigns: (customerId: string, forceRefresh?: boolean) => Promise<void>;
   fetchDraftCampaigns: () => Promise<void>;
@@ -88,6 +134,16 @@ export const useCampaignsStore = create<CampaignsState>((set, get) => ({
   activities: [],
   customerId: 'demo',
   isDemo: true,
+
+  // Drill-down state
+  drilldownLevel: 'campaigns',
+  selectedCampaign: null,
+  selectedAdGroup: null,
+  adGroups: [],
+  keywords: [],
+  adGroupsLoading: false,
+  keywordsLoading: false,
+
   wasterThreshold: DEFAULT_WASTER_THRESHOLD, // Always start with default to avoid hydration mismatch
   loading: true,
   syncing: false,
@@ -131,6 +187,89 @@ export const useCampaignsStore = create<CampaignsState>((set, get) => ({
     set((state) => ({
       activities: [newActivity, ...state.activities].slice(0, MAX_ACTIVITIES),
     }));
+  },
+
+  // Drill-down navigation
+  drillIntoCampaign: async (campaign) => {
+    const state = get();
+    set({
+      drilldownLevel: 'adGroups',
+      selectedCampaign: campaign,
+      adGroupsLoading: true,
+      adGroups: [],
+    });
+
+    try {
+      const params = new URLSearchParams({
+        customerId: state.customerId,
+        campaignId: campaign.id,
+      });
+      const res = await fetch(`/api/google-ads/ad-groups?${params}`);
+      const data = await res.json();
+
+      set({
+        adGroups: data.adGroups || [],
+        adGroupsLoading: false,
+      });
+    } catch (error) {
+      console.error('[CampaignsStore] Error fetching ad groups:', error);
+      set({ adGroupsLoading: false });
+    }
+  },
+
+  drillIntoAdGroup: async (adGroup) => {
+    const state = get();
+    set({
+      drilldownLevel: 'keywords',
+      selectedAdGroup: adGroup,
+      keywordsLoading: true,
+      keywords: [],
+    });
+
+    try {
+      const params = new URLSearchParams({
+        customerId: state.customerId,
+        campaignId: state.selectedCampaign?.id || '',
+        adGroupId: adGroup.id,
+      });
+      const res = await fetch(`/api/google-ads/keywords?${params}`);
+      const data = await res.json();
+
+      set({
+        keywords: data.keywords || [],
+        keywordsLoading: false,
+      });
+    } catch (error) {
+      console.error('[CampaignsStore] Error fetching keywords:', error);
+      set({ keywordsLoading: false });
+    }
+  },
+
+  goBack: () => {
+    const state = get();
+    if (state.drilldownLevel === 'keywords') {
+      set({
+        drilldownLevel: 'adGroups',
+        selectedAdGroup: null,
+        keywords: [],
+      });
+    } else if (state.drilldownLevel === 'adGroups') {
+      set({
+        drilldownLevel: 'campaigns',
+        selectedCampaign: null,
+        adGroups: [],
+      });
+    }
+  },
+
+  resetDrilldown: () => {
+    set({
+      drilldownLevel: 'campaigns',
+      selectedCampaign: null,
+      selectedAdGroup: null,
+      adGroups: [],
+      keywords: [],
+    });
   },
 
   // Cache-aware fetch campaigns

@@ -10,7 +10,7 @@ import { useCampaigns, useDashboardStats } from '@/hooks/useCampaigns';
 import { useCampaignsStore } from '@/stores/campaigns-store';
 import KPICards from '@/components/dashboard/KPICards';
 import QuickActionsBar from '@/components/dashboard/QuickActionsBar';
-import CampaignTable from '@/components/dashboard/CampaignTable';
+import DrilldownContainer from '@/components/dashboard/DrilldownContainer';
 import ActivityHistory from '@/components/dashboard/ActivityHistory';
 import CommandPalette from '@/components/CommandPalette';
 
@@ -248,7 +248,7 @@ export default function Home() {
         {/* Campaign Table with inline editing + Activity History */}
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
           <div className="xl:col-span-3">
-            <CampaignTable onScoreClick={handleScoreClick} />
+            <DrilldownContainer onScoreClick={handleScoreClick} />
           </div>
           <div className="xl:col-span-1">
             <ActivityHistory />

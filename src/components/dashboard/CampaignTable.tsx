@@ -83,6 +83,7 @@ export default function CampaignTable({ onScoreClick }: CampaignTableProps) {
   const updateCampaignBudget = useCampaignsStore((state) => state.updateCampaignBudget);
   const pauseMultiple = useCampaignsStore((state) => state.pauseMultipleCampaigns);
   const enableMultiple = useCampaignsStore((state) => state.enableMultipleCampaigns);
+  const drillIntoCampaign = useCampaignsStore((state) => state.drillIntoCampaign);
 
   // Filter campaigns
   const filteredCampaigns = useMemo(() => {
@@ -439,7 +440,7 @@ export default function CampaignTable({ onScoreClick }: CampaignTableProps) {
           <div className="w-16 text-right">Conv</div>
           <div className="w-16 text-right">CTR</div>
           <div className="w-14 text-center">Score</div>
-          <div className="w-20"></div>
+          <div className="w-32"></div>
         </div>
 
         {/* Campaign rows */}
@@ -533,7 +534,16 @@ export default function CampaignTable({ onScoreClick }: CampaignTableProps) {
               </button>
 
               {/* Actions */}
-              <div className="w-20 flex justify-end">
+              <div className="w-32 flex justify-end gap-2">
+                <button
+                  onClick={() => drillIntoCampaign(campaign)}
+                  className="px-2 py-1 text-xs bg-accent/10 text-accent rounded-lg hover:bg-accent hover:text-white transition-colors"
+                  title="View ad groups"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
                 <button
                   onClick={() => handleSinglePause(campaign)}
                   className={`px-3 py-1 text-xs rounded-lg transition-colors ${
