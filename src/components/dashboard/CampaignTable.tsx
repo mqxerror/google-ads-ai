@@ -7,8 +7,10 @@ import { useCampaignSelection } from '@/hooks/useCampaigns';
 import { useShallow } from 'zustand/react/shallow';
 import CampaignDrawer from './CampaignDrawer';
 import ConfirmModal from '@/components/ConfirmModal';
+import SavedViewsDropdown, { FilterConfig, SavedView } from './SavedViewsDropdown';
 
 const STORAGE_KEY_FILTERS = 'quickads_campaign_filters';
+const STORAGE_KEY_VIEWS = 'quickads_saved_views';
 
 interface CampaignTableProps {
   onScoreClick?: (campaign: Campaign) => void;
@@ -18,10 +20,23 @@ export default function CampaignTable({ onScoreClick }: CampaignTableProps) {
   // Filters - start with defaults, load from localStorage after mount to avoid hydration mismatch
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ENABLED' | 'PAUSED'>('ALL');
+  const [scoreRange, setScoreRange] = useState<{ min: number; max: number } | null>(null);
+  const [typeFilter, setTypeFilter] = useState<'ALL' | 'SEARCH' | 'DISPLAY' | 'SHOPPING' | 'VIDEO' | 'PERFORMANCE_MAX'>('ALL');
+  const [spendRange, setSpendRange] = useState<{ min: number; max: number } | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
 
-  // Hydrate filters from localStorage after mount
+  // Current filter config for saved views
+  const currentFilters: FilterConfig = {
+    searchQuery,
+    statusFilter,
+    scoreRange,
+    typeFilter,
+    spendRange,
+  };
+
+  // Hydrate filters and saved views from localStorage after mount
   useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_FILTERS);
@@ -29,6 +44,13 @@ export default function CampaignTable({ onScoreClick }: CampaignTableProps) {
         const parsed = JSON.parse(stored);
         if (parsed.searchQuery) setSearchQuery(parsed.searchQuery);
         if (parsed.statusFilter) setStatusFilter(parsed.statusFilter);
+        if (parsed.scoreRange) setScoreRange(parsed.scoreRange);
+        if (parsed.typeFilter) setTypeFilter(parsed.typeFilter);
+        if (parsed.spendRange) setSpendRange(parsed.spendRange);
+      }
+      const storedViews = localStorage.getItem(STORAGE_KEY_VIEWS);
+      if (storedViews) {
+        setSavedViews(JSON.parse(storedViews));
       }
     } catch (e) {
       console.error('Failed to load filters:', e);
@@ -40,11 +62,45 @@ export default function CampaignTable({ onScoreClick }: CampaignTableProps) {
   useEffect(() => {
     if (!isHydrated) return;
     try {
-      localStorage.setItem(STORAGE_KEY_FILTERS, JSON.stringify({ searchQuery, statusFilter }));
+      localStorage.setItem(STORAGE_KEY_FILTERS, JSON.stringify({ searchQuery, statusFilter, scoreRange, typeFilter, spendRange }));
     } catch (e) {
       console.error('Failed to save filters:', e);
     }
-  }, [searchQuery, statusFilter, isHydrated]);
+  }, [searchQuery, statusFilter, scoreRange, typeFilter, spendRange, isHydrated]);
+
+  // Persist saved views
+  useEffect(() => {
+    if (!isHydrated) return;
+    try {
+      localStorage.setItem(STORAGE_KEY_VIEWS, JSON.stringify(savedViews));
+    } catch (e) {
+      console.error('Failed to save views:', e);
+    }
+  }, [savedViews, isHydrated]);
+
+  // Apply saved view filters
+  const applyView = (filters: FilterConfig) => {
+    setSearchQuery(filters.searchQuery);
+    setStatusFilter(filters.statusFilter);
+    setScoreRange(filters.scoreRange);
+    setTypeFilter(filters.typeFilter);
+    setSpendRange(filters.spendRange);
+  };
+
+  // Save current filters as a new view
+  const saveView = (name: string) => {
+    const newView: SavedView = {
+      id: `custom-${Date.now()}`,
+      name,
+      filters: { ...currentFilters },
+    };
+    setSavedViews((prev) => [...prev, newView]);
+  };
+
+  // Delete a saved view
+  const deleteView = (id: string) => {
+    setSavedViews((prev) => prev.filter((v) => v.id !== id));
+  };
 
   // Inline editing
   const [editingBudgetId, setEditingBudgetId] = useState<string | null>(null);
@@ -90,9 +146,18 @@ export default function CampaignTable({ onScoreClick }: CampaignTableProps) {
     return campaigns.filter((c) => {
       if (searchQuery && !c.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
       if (statusFilter !== 'ALL' && c.status !== statusFilter) return false;
+      if (scoreRange) {
+        const score = c.aiScore ?? 0;
+        if (score < scoreRange.min || score > scoreRange.max) return false;
+      }
+      if (typeFilter !== 'ALL' && c.type !== typeFilter) return false;
+      if (spendRange) {
+        const spend = c.dailyBudget ?? 0;
+        if (spend < spendRange.min || (spendRange.max !== Infinity && spend > spendRange.max)) return false;
+      }
       return true;
     });
-  }, [campaigns, searchQuery, statusFilter]);
+  }, [campaigns, searchQuery, statusFilter, scoreRange, typeFilter, spendRange]);
 
   // Inline budget editing handlers
   const startEditingBudget = (campaign: Campaign) => {
@@ -311,6 +376,15 @@ export default function CampaignTable({ onScoreClick }: CampaignTableProps) {
 
         <div className="flex-1" />
 
+        {/* Saved Views Dropdown */}
+        <SavedViewsDropdown
+          currentFilters={currentFilters}
+          onSelectView={applyView}
+          savedViews={savedViews}
+          onSaveView={saveView}
+          onDeleteView={deleteView}
+        />
+
         {/* Search */}
         <div className="relative">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -351,7 +425,8 @@ export default function CampaignTable({ onScoreClick }: CampaignTableProps) {
 
       {/* Filters row */}
       {showFilters && (
-        <div className="p-4 bg-surface2/50 border-b border-divider flex items-center gap-4">
+        <div className="p-4 bg-surface2/50 border-b border-divider flex items-center gap-4 flex-wrap">
+          {/* Status Filter */}
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
@@ -361,6 +436,80 @@ export default function CampaignTable({ onScoreClick }: CampaignTableProps) {
             <option value="ENABLED">Enabled</option>
             <option value="PAUSED">Paused</option>
           </select>
+
+          {/* Type Filter */}
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
+            className="px-3 py-1.5 bg-surface rounded-lg text-sm text-text border border-divider focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            <option value="ALL">All Types</option>
+            <option value="SEARCH">Search</option>
+            <option value="DISPLAY">Display</option>
+            <option value="SHOPPING">Shopping</option>
+            <option value="VIDEO">Video</option>
+            <option value="PERFORMANCE_MAX">Performance Max</option>
+          </select>
+
+          {/* Score Range */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-text3">Score:</span>
+            <select
+              value={scoreRange ? `${scoreRange.min}-${scoreRange.max}` : 'ALL'}
+              onChange={(e) => {
+                if (e.target.value === 'ALL') {
+                  setScoreRange(null);
+                } else {
+                  const [min, max] = e.target.value.split('-').map(Number);
+                  setScoreRange({ min, max });
+                }
+              }}
+              className="px-3 py-1.5 bg-surface rounded-lg text-sm text-text border border-divider focus:outline-none focus:ring-2 focus:ring-accent"
+            >
+              <option value="ALL">Any Score</option>
+              <option value="0-39">Wasters (0-39)</option>
+              <option value="40-69">Average (40-69)</option>
+              <option value="70-100">Top (70-100)</option>
+            </select>
+          </div>
+
+          {/* Spend Range */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-text3">Budget:</span>
+            <select
+              value={spendRange ? `${spendRange.min}-${spendRange.max}` : 'ALL'}
+              onChange={(e) => {
+                if (e.target.value === 'ALL') {
+                  setSpendRange(null);
+                } else {
+                  const [min, maxStr] = e.target.value.split('-');
+                  setSpendRange({ min: Number(min), max: maxStr === 'Infinity' ? Infinity : Number(maxStr) });
+                }
+              }}
+              className="px-3 py-1.5 bg-surface rounded-lg text-sm text-text border border-divider focus:outline-none focus:ring-2 focus:ring-accent"
+            >
+              <option value="ALL">Any Budget</option>
+              <option value="0-50">$0 - $50/day</option>
+              <option value="50-100">$50 - $100/day</option>
+              <option value="100-Infinity">$100+/day</option>
+            </select>
+          </div>
+
+          {/* Clear Filters */}
+          {(statusFilter !== 'ALL' || typeFilter !== 'ALL' || scoreRange || spendRange || searchQuery) && (
+            <button
+              onClick={() => {
+                setStatusFilter('ALL');
+                setTypeFilter('ALL');
+                setScoreRange(null);
+                setSpendRange(null);
+                setSearchQuery('');
+              }}
+              className="px-3 py-1.5 text-sm text-accent hover:text-accent/80 transition-colors"
+            >
+              Clear All
+            </button>
+          )}
         </div>
       )}
 
