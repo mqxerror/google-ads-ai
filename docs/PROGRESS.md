@@ -1,6 +1,6 @@
 # Quick Ads AI - Development Progress
 
-## Current Status: January 5, 2026
+## Current Status: January 6, 2026
 
 ### Epic Status Overview
 
@@ -12,7 +12,7 @@
 - [x] Multi-account support (up to 50)
 - [ ] Disconnect individual accounts UI
 
-#### Epic 2: Smart Grid Core - 80% COMPLETE
+#### Epic 2: Smart Grid Core - 95% COMPLETE
 - [x] Campaign data grid with metrics
 - [x] Sortable/filterable columns
 - [x] Inline budget editing with auto-refresh
@@ -20,16 +20,18 @@
 - [x] Bulk actions (pause/enable multiple)
 - [x] CSV export
 - [x] Filter persistence (localStorage)
-- [ ] Saved custom views
-- [ ] Drill-down navigation (Campaign → Ad Groups → Keywords)
+- [x] Saved views (presets: All, Wasters, Top Performers, Paused, High Spend)
+- [x] Drill-down navigation (Campaign → Ad Groups → Keywords)
 - [ ] Virtual scrolling for 1000+ rows
 
-#### Epic 3: AI Score & Recommendations - 90% COMPLETE
+#### Epic 3: AI Score & Recommendations - 95% COMPLETE
 - [x] AI Score calculation (0-100)
 - [x] Color-coded scores (green ≥70, yellow 40-69, red <40)
 - [x] Score breakdown with factors
 - [x] AI recommendations per campaign
 - [x] Waster detection & threshold settings
+- [x] Explainable AI Score drawer with driver breakdown
+- [x] Score trend sparkline (7-day)
 - [ ] "Fix This" action buttons
 
 #### Epic 4: Action Queue & Safety Model - 40% COMPLETE
@@ -49,21 +51,26 @@
 - [x] Model selection (Claude/GPT)
 - [ ] AI-suggested actions populate Action Queue
 
-#### Epic 6: Campaign Type Support - 70% COMPLETE
+#### Epic 6: Campaign Type Support - 75% COMPLETE
 - [x] Search campaigns display
-- [x] PMax campaigns display
+- [x] PMax campaigns display (fixed enum mapping)
 - [x] Shopping campaigns display
 - [x] Display campaigns display
 - [x] Video campaigns display
 - [x] Negative keywords (account & campaign level)
+- [x] SMART campaign type support
 - [ ] Full keyword management (view/edit/pause)
 - [ ] Search terms report with recommendations
 - [ ] Ad copy regeneration with AI
 
-#### Epic 7: Polish & Launch Readiness - 50% COMPLETE
+#### Epic 7: Polish & Launch Readiness - 70% COMPLETE
 - [x] Error handling with user-friendly messages
 - [x] Loading states & spinners
 - [x] Date range picker
+- [x] Diagnostic Spend Chart with pacing & anomaly detection
+- [x] Clean number formatting ($13k instead of $13,000.00)
+- [x] Waste detection display (None/Low/Medium/High)
+- [x] Activity History with system events
 - [ ] ~~Simple/Pro mode toggle~~ (SKIPPED - not needed)
 - [ ] Mobile responsiveness improvements
 - [ ] Performance optimization
@@ -79,6 +86,71 @@
 - **Command Palette** (Cmd+K) - Quick navigation
 - **Debug Logs** (`/debug-logs`) - API call logging
 - **Ad Preview Center** (`/ad-preview-center`) - Preview ads
+
+---
+
+### Session Log: January 6, 2026
+
+#### Features Completed
+
+1. **Drill-Down Navigation**
+   - Three-level hierarchy: Campaigns → Ad Groups → Keywords
+   - Breadcrumb navigation with back button
+   - Click campaign row to view ad groups
+   - Click ad group to view keywords
+   - Files: `DrilldownContainer.tsx`, `CampaignTable.tsx`, `google-ads.ts`
+
+2. **Saved Views System**
+   - Preset views: All Campaigns, Wasters, Top Performers, Paused, High Spend
+   - SavedViewsDropdown component
+   - Additional filters: type, score range, budget range
+   - Files: `SavedViewsDropdown.tsx`, `CampaignTable.tsx`
+
+3. **Diagnostic Spend Chart**
+   - Pacing indicators (On Pace / Over Pace / Under Pace)
+   - Anomaly detection with red/yellow markers
+   - Compare toggle shows previous period overlay with % change
+   - Drivers panel shows top spending campaigns
+   - Target line based on total daily budget
+   - Projected monthly spend calculation
+   - File: `DiagnosticSpendChart.tsx`
+
+4. **Explainable AI Score**
+   - Score breakdown drawer with 5 ranked drivers
+   - Score trend sparkline (7-day)
+   - Top Priority callout with action + impact + confidence
+   - Drivers: Conversion Efficiency, Click Quality, Budget Utilization, Volume Signal, Coverage
+   - File: `ScoreBreakdownDrawer.tsx`
+
+5. **PMAX Campaign Type Fix**
+   - Issue: PMAX campaigns showing as SEARCH
+   - Root cause: Wrong enum mapping (was 9, should be 10)
+   - Fix: `PERFORMANCE_MAX = 10`, `SMART = 9`
+   - File: `google-ads.ts` (mapCampaignType function)
+
+#### UI/UX Fixes
+
+1. **Number Formatting**
+   - Changed from "619,818" to "$620k"
+   - Clean formatNumber helper used throughout
+   - Files: `KPICards.tsx`, `DiagnosticSpendChart.tsx`
+
+2. **Waste Detection Display**
+   - Changed "Potential Savings $0/month" to "Waste Detected: High"
+   - Levels: None (green), Low (green), Medium (yellow), High (red+pulse)
+   - Shows amount: "-$4,200/mo"
+   - File: `KPICards.tsx`
+
+3. **Activity History System Events**
+   - Added types: sync, scan, alert
+   - Shows: "Synced X campaigns" and "Detected X underperforming campaigns"
+   - Never looks empty - always shows system activity
+   - File: `ActivityHistory.tsx`, `campaigns-store.ts`
+
+#### Commits
+- `485f4b5` - fix: Aggregate campaign metrics across date range
+- `d5e9338` - feat: Add date range picker and debug logs page
+- `9d30ba4` - fix: Chart bars, number formatting, waste detection, activity events
 
 ---
 
@@ -120,33 +192,41 @@
 
 ### Next Phase Plan
 
-#### Priority 1: Drill-Down Navigation
-- Click campaign → View Ad Groups
-- Click ad group → View Keywords & Ads
-- Breadcrumb navigation
-- Back button support
+#### Priority 1: Contextual Insight Hub (AI Copilot)
+- Make Insight Hub contextual - aware of current view (account/campaign/ad group)
+- Suggest 3 prompts relevant to current context
+- Deep integration throughout the app
+- AI suggestions based on what user is looking at
 
-#### Priority 2: Saved Views
-- Save current filter + sort configuration
-- Name and manage saved views
-- Quick switch between views
+#### Priority 2: Interactive KPI Cards
+- Click KPI card to open context drawer
+- Total Spend → Budget allocation breakdown
+- Conversions → Conversion funnel analysis
+- AI Score → Portfolio health overview
+- Waste Detected → Detailed waste breakdown
 
-#### Priority 3: Action Queue
-- Full pending actions list UI
-- Approve/reject individual actions
-- Batch approve all
-- Risk level indicators
-
-#### Priority 4: Search Terms Report
+#### Priority 3: Search Terms Report
 - View search terms that triggered ads
 - Performance metrics per term
 - One-click add as negative keyword
 - AI recommendations for negatives
 
+#### Priority 4: Action Queue (Full Implementation)
+- Full pending actions list UI
+- Approve/reject individual actions
+- Batch approve all
+- Risk level indicators
+
 #### Priority 5: Rollback Capability
 - Undo recent changes
 - 24-hour rollback window
 - Show before/after values
+
+#### Completed (Previously Planned)
+- ~~Drill-Down Navigation~~ - DONE
+- ~~Saved Views~~ - DONE (presets implemented)
+- ~~Diagnostic Spend Chart~~ - DONE
+- ~~Explainable AI Score~~ - DONE
 
 ---
 
@@ -198,3 +278,22 @@ if (!res.ok || !data.success) {
 - Consider migrating to React Query for better cache management
 - Add E2E tests with Playwright
 - Add unit tests for AI score calculation
+- Virtual scrolling for large campaign lists (1000+ rows)
+- Mobile responsiveness improvements
+
+### New Components Added (Jan 6)
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `DrilldownContainer.tsx` | `src/components/dashboard/` | Three-level navigation wrapper |
+| `SavedViewsDropdown.tsx` | `src/components/dashboard/` | Preset view selection |
+| `DiagnosticSpendChart.tsx` | `src/components/dashboard/` | Spend pacing & anomaly chart |
+| `ScoreBreakdownDrawer.tsx` | `src/components/dashboard/` | Explainable AI score drawer |
+
+### API Endpoints Used
+- `GET /api/google-ads/accounts` - List accessible accounts
+- `GET /api/google-ads/campaigns` - Get campaigns for account
+- `GET /api/google-ads/ad-groups` - Get ad groups for campaign
+- `GET /api/google-ads/keywords` - Get keywords for ad group
+- `PATCH /api/google-ads/campaigns/[id]/budget` - Update campaign budget
+- `PATCH /api/google-ads/campaigns/[id]/status` - Pause/enable campaign
+- `POST /api/google-ads/negative-keywords` - Add negative keywords
