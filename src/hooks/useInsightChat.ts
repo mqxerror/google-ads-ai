@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { DateRange, getDefaultDateRange } from '@/components/insight-hub/DateRangePicker';
 
 export interface MCPSource {
   mcp: 'google_ads' | 'analytics' | 'search_console' | 'bigquery';
@@ -65,11 +66,13 @@ interface UseInsightChatReturn {
   isLoadingCampaigns: boolean;
   accounts: GoogleAdsAccount[];
   selectedAccountId: string | null;
+  dateRange: DateRange;
   sendMessage: (content: string) => Promise<void>;
   clearMessages: () => void;
   executeAction: (action: InsightAction) => Promise<void>;
   refreshCampaigns: () => Promise<void>;
   selectAccount: (accountId: string) => Promise<void>;
+  setDateRange: (range: DateRange) => void;
 }
 
 const SUGGESTED_PROMPTS = [
@@ -95,6 +98,7 @@ export function useInsightChat(): UseInsightChatReturn {
   const [accounts, setAccounts] = useState<GoogleAdsAccount[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [loginCustomerId, setLoginCustomerId] = useState<string | null>(null);
+  const [dateRange, setDateRange] = useState<DateRange>(getDefaultDateRange());
   const abortControllerRef = useRef<AbortController | null>(null);
   const initializedRef = useRef(false);
 
@@ -158,14 +162,18 @@ export function useInsightChat(): UseInsightChatReturn {
     }
   };
 
-  const fetchCampaignsForAccount = async (accountId: string, mccId?: string | null) => {
+  const fetchCampaignsForAccount = async (accountId: string, mccId?: string | null, range?: DateRange) => {
     setIsLoadingCampaigns(true);
     try {
-      const url = mccId
-        ? `/api/google-ads/campaigns?customerId=${accountId}&loginCustomerId=${mccId}`
-        : `/api/google-ads/campaigns?customerId=${accountId}`;
+      const currentRange = range || dateRange;
+      const params = new URLSearchParams({
+        customerId: accountId,
+        startDate: currentRange.startDate,
+        endDate: currentRange.endDate,
+      });
+      if (mccId) params.append('loginCustomerId', mccId);
 
-      const campaignsRes = await fetch(url);
+      const campaignsRes = await fetch(`/api/google-ads/campaigns?${params.toString()}`);
       const campaignsData = await campaignsRes.json();
 
       if (campaignsData.campaigns && campaignsData.campaigns.length > 0 && !campaignsData.isDemo) {
@@ -213,11 +221,15 @@ export function useInsightChat(): UseInsightChatReturn {
     if (selectedAccountId) {
       setIsLoadingCampaigns(true);
       try {
-        const url = loginCustomerId
-          ? `/api/google-ads/campaigns?customerId=${selectedAccountId}&loginCustomerId=${loginCustomerId}&forceRefresh=true`
-          : `/api/google-ads/campaigns?customerId=${selectedAccountId}&forceRefresh=true`;
+        const params = new URLSearchParams({
+          customerId: selectedAccountId,
+          startDate: dateRange.startDate,
+          endDate: dateRange.endDate,
+          forceRefresh: 'true',
+        });
+        if (loginCustomerId) params.append('loginCustomerId', loginCustomerId);
 
-        const res = await fetch(url);
+        const res = await fetch(`/api/google-ads/campaigns?${params.toString()}`);
         const data = await res.json();
         if (data.campaigns) {
           setCampaigns(data.campaigns);
@@ -227,6 +239,13 @@ export function useInsightChat(): UseInsightChatReturn {
       } finally {
         setIsLoadingCampaigns(false);
       }
+    }
+  };
+
+  const handleDateRangeChange = async (newRange: DateRange) => {
+    setDateRange(newRange);
+    if (selectedAccountId) {
+      await fetchCampaignsForAccount(selectedAccountId, loginCustomerId, newRange);
     }
   };
 
@@ -483,11 +502,13 @@ I can help you:
     isLoadingCampaigns,
     accounts,
     selectedAccountId,
+    dateRange,
     sendMessage,
     clearMessages,
     executeAction,
     refreshCampaigns,
     selectAccount,
+    setDateRange: handleDateRangeChange,
   };
 }
 

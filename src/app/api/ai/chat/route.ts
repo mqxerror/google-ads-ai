@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { DEFAULT_MODELS, ANTHROPIC_CONFIG } from '@/lib/ai-config';
+import { logAICall, logError } from '@/lib/log-store';
 
 interface CampaignData {
   id: string;
@@ -34,6 +35,14 @@ export async function POST(request: NextRequest) {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     const systemPrompt = buildSystemPrompt(campaigns);
 
+    const startTime = Date.now();
+    logAICall('Chat request started', {
+      model: DEFAULT_MODELS.INSIGHT_HUB_CHAT,
+      messageCount: messages.length,
+      campaignCount: campaigns?.length || 0,
+      hasApiKey: !!apiKey,
+    });
+
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
@@ -41,17 +50,31 @@ export async function POST(request: NextRequest) {
           if (apiKey) {
             try {
               await streamAnthropicResponse(apiKey, systemPrompt, messages, controller, encoder);
+              logAICall('Chat completed (Anthropic)', {
+                model: DEFAULT_MODELS.INSIGHT_HUB_CHAT,
+                source: 'anthropic',
+              }, startTime);
             } catch (error) {
               // If Anthropic fails, fall back to simulation
               console.warn('[Chat] Anthropic API failed, using simulation:', error);
+              logError('ai', 'Anthropic API failed, falling back to simulation', error);
               await simulateResponse(messages, campaigns, controller, encoder);
+              logAICall('Chat completed (simulation fallback)', {
+                source: 'simulation',
+                reason: 'anthropic_failed',
+              }, startTime);
             }
           } else {
             await simulateResponse(messages, campaigns, controller, encoder);
+            logAICall('Chat completed (simulation)', {
+              source: 'simulation',
+              reason: 'no_api_key',
+            }, startTime);
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : 'Streaming failed';
           console.error('[Chat] Error:', errorMessage);
+          logError('ai', 'Chat streaming error', error);
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: errorMessage })}\n\n`));
         } finally {
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));

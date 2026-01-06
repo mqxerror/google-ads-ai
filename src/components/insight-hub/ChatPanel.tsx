@@ -5,6 +5,7 @@ import { MCPStatusBar } from './MCPStatusBar';
 import { MessageList } from './MessageList';
 import { ChatInput } from './ChatInput';
 import { AccountSelector } from './AccountSelector';
+import { DateRangePicker } from './DateRangePicker';
 
 export function ChatPanel() {
   const {
@@ -17,11 +18,13 @@ export function ChatPanel() {
     isLoadingCampaigns,
     accounts,
     selectedAccountId,
+    dateRange,
     sendMessage,
     clearMessages,
     executeAction,
     refreshCampaigns,
     selectAccount,
+    setDateRange,
   } = useInsightChat();
 
   const handleConfigure = (type: string) => {
@@ -44,17 +47,24 @@ export function ChatPanel() {
           onRefresh={refreshCampaigns}
           isRefreshing={isLoadingCampaigns}
         />
-        {accounts.length > 1 && (
-          <div className="pr-4 flex items-center gap-2">
-            <span className="text-xs text-gray-400">Account:</span>
-            <AccountSelector
-              accounts={accounts}
-              selectedAccountId={selectedAccountId}
-              onSelect={selectAccount}
-              isLoading={isLoadingCampaigns}
-            />
-          </div>
-        )}
+        <div className="pr-4 flex items-center gap-3">
+          <DateRangePicker
+            value={dateRange}
+            onChange={setDateRange}
+            disabled={isLoadingCampaigns}
+          />
+          {accounts.length > 1 && (
+            <>
+              <div className="h-4 w-px bg-gray-200" />
+              <AccountSelector
+                accounts={accounts}
+                selectedAccountId={selectedAccountId}
+                onSelect={selectAccount}
+                isLoading={isLoadingCampaigns}
+              />
+            </>
+          )}
+        </div>
       </div>
 
       {/* Error banner */}

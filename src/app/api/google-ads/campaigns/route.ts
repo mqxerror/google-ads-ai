@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { updateCampaignStatus, createCampaign, CreateCampaignInput, fetchCampaigns } from '@/lib/google-ads';
 import { getCampaignsFromDB, getLastSyncStatus, canSync } from '@/lib/data-sync';
+import { logGoogleAdsCall, logError } from '@/lib/log-store';
 
 // Demo campaigns for testing (shown when no DB data available)
 const DEMO_CAMPAIGNS = [
@@ -41,6 +42,11 @@ export async function GET(request: NextRequest) {
     const forceRefresh = searchParams.get('forceRefresh') === 'true';
     // Use loginCustomerId from request, or fall back to env var
     const loginCustomerId = searchParams.get('loginCustomerId') || process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+    // Date range parameters
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
+
+    console.log(`[Campaigns API] Request: customerId=${customerId}, startDate=${startDate}, endDate=${endDate}, forceRefresh=${forceRefresh}`);
 
     // Demo mode - return demo data
     if (!customerId || customerId === 'demo') {
@@ -55,13 +61,30 @@ export async function GET(request: NextRequest) {
     // Force refresh - fetch directly from Google Ads API (bypasses cache and rate limits)
     // This is a "light refresh" that doesn't update the database but shows latest campaigns
     if (forceRefresh && session?.refreshToken) {
+      const startTime = Date.now();
       try {
-        console.log('[Campaigns API] Force refresh - fetching directly from Google Ads API');
+        console.log(`[Campaigns API] Force refresh - fetching from Google Ads API (${startDate} to ${endDate})`);
+        logGoogleAdsCall('fetchCampaigns (force refresh)', {
+          customerId,
+          startDate,
+          endDate,
+          source: 'force_refresh',
+        });
+
         const campaigns = await fetchCampaigns(
           session.refreshToken,
           customerId,
-          loginCustomerId
+          loginCustomerId,
+          startDate || undefined,
+          endDate || undefined
         );
+
+        logGoogleAdsCall('fetchCampaigns completed', {
+          customerId,
+          campaignCount: campaigns.length,
+          totalSpend: campaigns.reduce((sum, c) => sum + (c.spend || 0), 0),
+          dateRange: { startDate, endDate },
+        }, startTime);
 
         return NextResponse.json({
           campaigns,
@@ -74,9 +97,11 @@ export async function GET(request: NextRequest) {
           },
           canSync: true,
           source: 'live_api',
+          dateRange: { startDate, endDate },
         });
       } catch (apiError) {
         console.error('[Campaigns API] Force refresh failed:', apiError);
+        logError('google_ads', 'Force refresh failed', apiError);
         // Fall through to cached data
       }
     }
@@ -111,13 +136,30 @@ export async function GET(request: NextRequest) {
 
       // No cached data - try live API fetch if authenticated
       if (session?.refreshToken) {
+        const startTime = Date.now();
         try {
-          console.log('[Campaigns API] No cache, fetching from Google Ads API');
+          console.log(`[Campaigns API] No cache, fetching from Google Ads API (${startDate} to ${endDate})`);
+          logGoogleAdsCall('fetchCampaigns (no cache)', {
+            customerId,
+            startDate,
+            endDate,
+            source: 'no_cache',
+          });
+
           const campaigns = await fetchCampaigns(
             session.refreshToken,
             customerId,
-            loginCustomerId
+            loginCustomerId,
+            startDate || undefined,
+            endDate || undefined
           );
+
+          logGoogleAdsCall('fetchCampaigns completed', {
+            customerId,
+            campaignCount: campaigns.length,
+            totalSpend: campaigns.reduce((sum, c) => sum + (c.spend || 0), 0),
+            dateRange: { startDate, endDate },
+          }, startTime);
 
           if (campaigns.length > 0) {
             return NextResponse.json({
@@ -127,10 +169,12 @@ export async function GET(request: NextRequest) {
               message: 'Showing live data. Click "Sync Data" to cache metrics.',
               canSync: syncCheck.allowed,
               source: 'live_api',
+              dateRange: { startDate, endDate },
             });
           }
         } catch (apiError) {
           console.error('[Campaigns API] Live API fetch failed:', apiError);
+          logError('google_ads', 'Live API fetch failed', apiError);
         }
       }
 
