@@ -214,7 +214,7 @@ export default function Home() {
         <QuickActionsBar onShowNegativeKeywords={() => setShowNegativeKeywords(true)} />
 
         {/* Diagnostic Spend Chart */}
-        <DiagnosticSpendChart monthlyBudget={totalSpend * 2.5} />
+        <DiagnosticSpendChart />
 
         {/* Campaign Table with inline editing + Activity History */}
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">

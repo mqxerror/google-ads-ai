@@ -20,12 +20,13 @@ interface DraftCampaign {
 
 export interface Activity {
   id: string;
-  type: 'pause' | 'enable' | 'budget_change' | 'negative_keywords' | 'create' | 'bulk_pause' | 'bulk_enable';
+  type: 'pause' | 'enable' | 'budget_change' | 'negative_keywords' | 'create' | 'bulk_pause' | 'bulk_enable' | 'sync' | 'scan' | 'alert';
   description: string;
   campaignId?: string;
   campaignName?: string;
   details?: Record<string, any>;
   timestamp: number;
+  isSystem?: boolean; // System-generated events (syncs, scans, etc.)
 }
 
 export interface AdGroup {
