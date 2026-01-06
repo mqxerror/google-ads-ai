@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useCampaignsStore } from '@/stores/campaigns-store';
 
 interface NegativeSuggestion {
   searchTerm: string;
@@ -49,12 +50,93 @@ export default function NegativeKeywordsPanel({ isOpen, onClose, customerId }: N
   const [selectedTerms, setSelectedTerms] = useState<Set<string>>(new Set());
   const [addingNegatives, setAddingNegatives] = useState(false);
   const [campaignFilter, setCampaignFilter] = useState<string>('all');
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const addNegativeKeywords = useCampaignsStore((state) => state.addNegativeKeywords);
 
   useEffect(() => {
-    if (isOpen && customerId && customerId !== 'demo') {
-      analyzeSearchTerms();
+    if (isOpen && customerId) {
+      if (customerId === 'demo') {
+        // Load demo data for testing
+        loadDemoData();
+      } else {
+        analyzeSearchTerms();
+      }
     }
   }, [isOpen, customerId]);
+
+  function loadDemoData() {
+    setLoading(true);
+    // Simulate loading delay
+    setTimeout(() => {
+      setSuggestions([
+        {
+          searchTerm: 'free google ads',
+          reason: 'Users searching for free alternatives are unlikely to convert',
+          category: 'free',
+          confidence: 0.92,
+          cost: 45.20,
+          potentialSavings: 45.20,
+          campaignId: '1',
+          campaignName: 'Brand Search',
+        },
+        {
+          searchTerm: 'google ads jobs',
+          reason: 'Job seekers, not potential customers',
+          category: 'jobs',
+          confidence: 0.88,
+          cost: 32.50,
+          potentialSavings: 32.50,
+          campaignId: '2',
+          campaignName: 'Generic Keywords',
+        },
+        {
+          searchTerm: 'how to create ads tutorial',
+          reason: 'DIY/educational intent, low purchase intent',
+          category: 'diy',
+          confidence: 0.85,
+          cost: 28.00,
+          potentialSavings: 28.00,
+          campaignId: '1',
+          campaignName: 'Brand Search',
+        },
+        {
+          searchTerm: 'cheap advertising services',
+          reason: 'Price-sensitive bargain hunters with low lifetime value',
+          category: 'cheap',
+          confidence: 0.78,
+          cost: 52.30,
+          potentialSavings: 52.30,
+          campaignId: '3',
+          campaignName: 'Competitor Terms',
+        },
+        {
+          searchTerm: 'what is ppc advertising',
+          reason: 'Research/informational query, not ready to buy',
+          category: 'informational',
+          confidence: 0.82,
+          cost: 18.90,
+          potentialSavings: 18.90,
+          campaignId: '2',
+          campaignName: 'Generic Keywords',
+        },
+      ]);
+      setSummary({
+        analyzed: 1250,
+        wastersFound: 5,
+        suggestionsCount: 5,
+        potentialSavings: 176.90,
+        byCategory: {
+          free: { count: 1, savings: 45.20 },
+          jobs: { count: 1, savings: 32.50 },
+          diy: { count: 1, savings: 28.00 },
+          cheap: { count: 1, savings: 52.30 },
+          informational: { count: 1, savings: 18.90 },
+        },
+      });
+      setLoading(false);
+    }, 800);
+  }
 
   async function analyzeSearchTerms() {
     setLoading(true);
@@ -133,13 +215,55 @@ export default function NegativeKeywordsPanel({ isOpen, onClose, customerId }: N
     if (selectedTerms.size === 0) return;
 
     setAddingNegatives(true);
-    // TODO: Implement actual Google Ads negative keyword addition
-    // For now, just simulate success
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    setSuccessMessage(null);
+    setError(null);
 
-    alert(`Added ${selectedTerms.size} negative keywords! (Demo - actual implementation coming soon)`);
-    setSelectedTerms(new Set());
-    setAddingNegatives(false);
+    const keywords = Array.from(selectedTerms);
+
+    // Determine if adding to specific campaign or account level
+    const level = campaignFilter === 'all' ? 'account' : 'campaign';
+    const campaignId = campaignFilter === 'all' ? undefined : campaignFilter;
+    const campaignName = campaignId
+      ? uniqueCampaigns.find(c => c.id === campaignId)?.name
+      : undefined;
+
+    try {
+      // Demo mode: simulate success and log activity directly
+      if (customerId === 'demo') {
+        // Import and use the store's addActivity directly for demo
+        const { addActivity } = useCampaignsStore.getState();
+        addActivity({
+          type: 'negative_keywords',
+          description: level === 'campaign' && campaignName
+            ? `Added ${keywords.length} negative keywords to "${campaignName}"`
+            : `Added ${keywords.length} negative keywords (account level)`,
+          campaignId,
+          campaignName,
+          details: { count: keywords.length, keywords: keywords.slice(0, 5), level },
+        });
+        setSuccessMessage(`Successfully added ${keywords.length} negative keywords! (Demo)`);
+        setSuggestions(prev => prev.filter(s => !selectedTerms.has(s.searchTerm)));
+        setSelectedTerms(new Set());
+        setAddingNegatives(false);
+        return;
+      }
+
+      const result = await addNegativeKeywords(keywords, level, campaignId, campaignName);
+
+      if (result.success) {
+        setSuccessMessage(`Successfully added ${result.count} negative keywords!`);
+        // Remove added terms from suggestions
+        setSuggestions(prev => prev.filter(s => !selectedTerms.has(s.searchTerm)));
+        setSelectedTerms(new Set());
+      } else {
+        setError('Failed to add negative keywords. Please try again.');
+      }
+    } catch (err) {
+      console.error('Add negatives error:', err);
+      setError('An error occurred while adding negative keywords.');
+    } finally {
+      setAddingNegatives(false);
+    }
   }
 
   // Get unique campaigns for filter dropdown
@@ -196,17 +320,7 @@ export default function NegativeKeywordsPanel({ isOpen, onClose, customerId }: N
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
-          {customerId === 'demo' ? (
-            <div className="text-center py-12">
-              <div className="w-16 h-16 rounded-full bg-surface2 flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-text3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-medium text-text mb-2">Connect Google Ads</h3>
-              <p className="text-text2 text-sm">Sign in with Google to analyze your search terms</p>
-            </div>
-          ) : loading ? (
+          {loading ? (
             <div className="text-center py-12">
               <div className="w-12 h-12 rounded-full border-4 border-accent border-t-transparent animate-spin mx-auto mb-4" />
               <p className="text-text2">Analyzing search terms with AI...</p>
@@ -261,6 +375,18 @@ export default function NegativeKeywordsPanel({ isOpen, onClose, customerId }: N
                       );
                     })}
                   </select>
+                </div>
+              )}
+
+              {/* Success Message */}
+              {successMessage && (
+                <div className="mb-4 p-4 rounded-xl bg-success/10 border border-success/20">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-5 h-5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    <p className="text-sm text-success font-medium">{successMessage}</p>
+                  </div>
                 </div>
               )}
 

@@ -239,6 +239,31 @@ export async function fetchCampaigns(
   }
 
   try {
+    // Query 1: Get campaign budgets (no date segments allowed with budget)
+    const budgetResults = await customer.query(`
+      SELECT
+        campaign.id,
+        campaign_budget.amount_micros
+      FROM campaign
+      WHERE campaign.status != 'REMOVED'
+    `);
+
+    console.log(`[Google Ads] Budget query returned ${budgetResults.length} rows`);
+
+    // Build budget lookup map
+    const budgetMap = new Map<string, number>();
+    for (const row of budgetResults) {
+      const id = row.campaign?.id?.toString() || '';
+      const amountMicros = row.campaign_budget?.amount_micros || 0;
+      console.log(`[Google Ads] Campaign ${id} budget: ${amountMicros} micros = $${amountMicros / 1_000_000}`);
+      if (id) {
+        budgetMap.set(id, amountMicros / 1_000_000);
+      }
+    }
+
+    console.log(`[Google Ads] Budget map has ${budgetMap.size} entries`);
+
+    // Query 2: Get metrics with date segmentation
     // Query returns one row per campaign per day when using segments.date
     // We need to aggregate the metrics across all days
     const rawResults = await customer.query(`
@@ -330,6 +355,7 @@ export async function fetchCampaigns(
           name: c.name,
           status: mapStatus(c.status),
           type: campaignType,
+          dailyBudget: budgetMap.get(c.id) || 0,
           spend,
           clicks,
           impressions,
@@ -430,6 +456,80 @@ export async function updateCampaignStatus(
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to update status',
+    };
+  }
+}
+
+// Update campaign budget
+export async function updateCampaignBudget(
+  refreshToken: string,
+  customerId: string,
+  campaignId: string,
+  newBudget: number,
+  loginCustomerId?: string
+): Promise<{ success: boolean; error?: string }> {
+  console.log(`[Google Ads] updateCampaignBudget called:`, {
+    customerId,
+    campaignId,
+    newBudget,
+    loginCustomerId,
+  });
+
+  const client = createGoogleAdsClient();
+  const customer = getCustomer(client, customerId, refreshToken, loginCustomerId);
+
+  try {
+    // First, get the campaign's budget resource name
+    const query = `
+      SELECT campaign.campaign_budget
+      FROM campaign
+      WHERE campaign.id = ${campaignId}
+    `;
+
+    console.log(`[Google Ads] Querying for campaign budget...`);
+    const results = await customer.query(query);
+
+    if (!results || results.length === 0) {
+      console.error(`[Google Ads] Campaign ${campaignId} not found`);
+      return { success: false, error: 'Campaign not found' };
+    }
+
+    const budgetResourceName = (results[0] as any).campaign?.campaign_budget;
+    console.log(`[Google Ads] Found budget resource: ${budgetResourceName}`);
+
+    if (!budgetResourceName) {
+      console.error(`[Google Ads] Campaign budget not found for campaign ${campaignId}`);
+      return { success: false, error: 'Campaign budget not found' };
+    }
+
+    // Update the budget amount (convert to micros)
+    const amountMicros = Math.round(newBudget * 1_000_000);
+    console.log(`[Google Ads] Updating budget to ${amountMicros} micros ($${newBudget})...`);
+
+    await customer.campaignBudgets.update([{
+      resource_name: budgetResourceName,
+      amount_micros: amountMicros,
+    }] as any);
+
+    console.log(`[Google Ads] Successfully updated budget for campaign ${campaignId} to $${newBudget}`);
+    return { success: true };
+  } catch (error) {
+    console.error('[Google Ads] Error updating campaign budget:', error);
+
+    // Extract detailed error message
+    let errorMessage = 'Failed to update budget';
+    if (error && typeof error === 'object') {
+      if ('errors' in error && Array.isArray((error as any).errors)) {
+        errorMessage = (error as any).errors.map((e: any) => e.message).join('; ');
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+    }
+
+    console.error('[Google Ads] Budget update error details:', errorMessage);
+    return {
+      success: false,
+      error: errorMessage,
     };
   }
 }
