@@ -151,6 +151,35 @@
 - `485f4b5` - fix: Aggregate campaign metrics across date range
 - `d5e9338` - feat: Add date range picker and debug logs page
 - `9d30ba4` - fix: Chart bars, number formatting, waste detection, activity events
+- `8c6b480` - docs: Update progress with Jan 6 session work
+- `dd94613` - feat: Add contextual AI copilot and interactive KPI cards
+
+---
+
+### Session 2: January 6, 2026 (Continued)
+
+#### Features Completed
+
+1. **Contextual AI Copilot**
+   - New `useContextualPrompts` hook generates relevant prompts based on view context
+   - `ContextualAIPanel` component shows 3 suggested questions
+   - Prompts adapt to: dashboard, campaign detail, ad group, keywords, spend shield
+   - Deep linking to Insight Hub with URL params (q, ctx, cid)
+   - Auto-sends query when navigating from dashboard prompts
+   - Files: `useContextualPrompts.ts`, `ContextualAIPanel.tsx`, `ChatPanel.tsx`, `command/page.tsx`
+
+2. **Interactive KPI Cards**
+   - All 4 KPI cards now clickable with hover effects
+   - "Click for details →" hint on each card
+   - Opens detailed drawer with analysis
+   - File: `KPICards.tsx`
+
+3. **KPI Detail Drawers**
+   - **Spend Breakdown**: By status, by campaign type, top spenders list
+   - **Conversion Analysis**: Funnel overview, top converters, zero-conversion warnings
+   - **Portfolio Health**: Score distribution, visual bar, attention needed list
+   - **Waste Analysis**: Categories (zero conv, high CPA, low score), biggest wasters, recommendations
+   - File: `KPIDetailDrawer.tsx`
 
 ---
 
@@ -192,18 +221,18 @@
 
 ### Next Phase Plan
 
-#### Priority 1: Contextual Insight Hub (AI Copilot)
-- Make Insight Hub contextual - aware of current view (account/campaign/ad group)
-- Suggest 3 prompts relevant to current context
-- Deep integration throughout the app
-- AI suggestions based on what user is looking at
+#### ~~Priority 1: Contextual Insight Hub (AI Copilot)~~ - DONE
+- ~~Make Insight Hub contextual - aware of current view (account/campaign/ad group)~~
+- ~~Suggest 3 prompts relevant to current context~~
+- ~~Deep integration throughout the app~~
+- ~~AI suggestions based on what user is looking at~~
 
-#### Priority 2: Interactive KPI Cards
-- Click KPI card to open context drawer
-- Total Spend → Budget allocation breakdown
-- Conversions → Conversion funnel analysis
-- AI Score → Portfolio health overview
-- Waste Detected → Detailed waste breakdown
+#### ~~Priority 2: Interactive KPI Cards~~ - DONE
+- ~~Click KPI card to open context drawer~~
+- ~~Total Spend → Budget allocation breakdown~~
+- ~~Conversions → Conversion funnel analysis~~
+- ~~AI Score → Portfolio health overview~~
+- ~~Waste Detected → Detailed waste breakdown~~
 
 #### Priority 3: Search Terms Report
 - View search terms that triggered ads
@@ -227,6 +256,8 @@
 - ~~Saved Views~~ - DONE (presets implemented)
 - ~~Diagnostic Spend Chart~~ - DONE
 - ~~Explainable AI Score~~ - DONE
+- ~~Contextual AI Copilot~~ - DONE
+- ~~Interactive KPI Cards~~ - DONE
 
 ---
 
@@ -288,6 +319,9 @@ if (!res.ok || !data.success) {
 | `SavedViewsDropdown.tsx` | `src/components/dashboard/` | Preset view selection |
 | `DiagnosticSpendChart.tsx` | `src/components/dashboard/` | Spend pacing & anomaly chart |
 | `ScoreBreakdownDrawer.tsx` | `src/components/dashboard/` | Explainable AI score drawer |
+| `ContextualAIPanel.tsx` | `src/components/dashboard/` | AI copilot with contextual prompts |
+| `KPIDetailDrawer.tsx` | `src/components/dashboard/` | Interactive KPI detail drawers |
+| `useContextualPrompts.ts` | `src/hooks/` | Context-aware prompt generation |
 
 ### API Endpoints Used
 - `GET /api/google-ads/accounts` - List accessible accounts
